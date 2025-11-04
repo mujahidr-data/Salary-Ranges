@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      body { font-family: Roboto, Arial, sans-serif; padding: 12px; }
+      table { border-collapse: collapse; width: 100%; }
+      th, td { border: 1px solid #ddd; padding: 6px; }
+      th { background: #f3f3f3; text-align: left; }
+      input[type=text] { width: 100%; box-sizing: border-box; }
+      .row { display:flex; gap:8px; margin:8px 0; }
+      button { padding:6px 10px; }
+    </style>
+  </head>
+  <body>
+    <h3>Job Family Exec Description Mapping</h3>
+    <div class="row">
+      <input id="code" type="text" placeholder="Aon Code (e.g., EN.SODE)" />
+      <input id="desc" type="text" placeholder="Exec Description (e.g., Engineering - Software Development)" />
+      <button onclick="addOrUpdate()">Add / Update</button>
+    </div>
+    <table id="tbl">
+      <thead>
+        <tr><th>Aon Code</th><th>Exec Description</th><th>Actions</th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <script>
+      function refresh(){
+        google.script.run
+          .withSuccessHandler(render)
+          .withFailureHandler(err => alert('Failed to load mappings: ' + err))
+          .listExecMappings_();
+      }
+      function render(rows){
+        const tb = document.querySelector('#tbl tbody');
+        tb.innerHTML = '';
+        rows.forEach(r=>{
+          const tr = document.createElement('tr');
+          tr.innerHTML = `<td>${r.code}</td><td>${r.desc}</td>`;
+          const td = document.createElement('td');
+          const del = document.createElement('button'); del.textContent = 'Delete';
+          del.onclick = ()=> google.script.run.withSuccessHandler(refresh).deleteExecMapping_(r.code);
+          td.appendChild(del); tr.appendChild(td); tb.appendChild(tr);
+        });
+      }
+      function addOrUpdate(){
+        const code = document.getElementById('code').value.trim();
+        const desc = document.getElementById('desc').value.trim();
+        if(!code || !desc) return;
+        google.script.run
+          .withSuccessHandler(()=>{ document.getElementById('code').value=''; document.getElementById('desc').value=''; refresh(); })
+          .withFailureHandler(err => alert('Add/Update failed: ' + err))
+          .upsertExecMapping_(code, desc);
+      }
+      refresh();
+    </script>
+  </body>
+</html>
