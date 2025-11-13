@@ -1,0 +1,29 @@
+**/**
+!SalaryRangesCalculator.gs
+!ExecMappingManager.html
+!appsscript.json
+
+# Exclude old individual scripts (archived)
+AppImports.gs
+Helpers.gs
+RangeCalculator.gs
+
+# System files
+.git/**
+.gitignore
+node_modules/**
+package.json
+package-lock.json
+
+# Documentation
+README.md
+SETUP.md
+QUICKSTART.md
+SCRIPT_ID.txt
+
+# Scripts
+.clasp.json
+.claspignore
+deploy.sh
+push_to_apps_script.sh
+build_consolidated.sh

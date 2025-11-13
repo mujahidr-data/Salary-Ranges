@@ -1,0 +1,33 @@
+{
+  "name": "salary-ranges",
+  "version": "1.0.0",
+  "description": "Google Apps Script for Salary Range Calculator with Aon market data integration",
+  "main": "RangeCalculator.gs",
+  "scripts": {
+    "push": "clasp push",
+    "pull": "clasp pull",
+    "open": "clasp open",
+    "deploy": "npm run push && git add . && git commit -m 'Deploy: Apps Script update' && git push",
+    "watch": "nodemon --watch '*.gs' --watch '*.html' --exec 'clasp push'",
+    "clasp:push": "clasp push",
+    "git:push": "git add . && git commit -m 'Auto-update' && git push",
+    "quick-push": "clasp push && git add . && git commit -m 'Quick update' && git push",
+    "sync": "./deploy.sh",
+    "status": "clasp status",
+    "logs": "clasp logs"
+  },
+  "keywords": [
+    "google-apps-script",
+    "salary-ranges",
+    "hibob",
+    "aon",
+    "compensation"
+  ],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@google/clasp": "^2.4.2",
+    "nodemon": "^3.0.1"
+  }
+}
+
