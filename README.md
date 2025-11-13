@@ -1,14 +1,20 @@
 # 💰 Salary Ranges Calculator
 
-**Consolidated Google Apps Script for comprehensive salary range analysis**
+**v3.1.0** - Consolidated Google Apps Script for comprehensive salary range analysis
 
 Combines HiBob employee data with Aon market data to calculate salary ranges across multiple regions, job families, and career levels.
+
+**🆕 What's New in v3.1.0:**
+- ✨ P10 and P25 percentile support
+- ⚡ Quick Setup (one-click initialization)
+- 🎯 Simplified menu (combined functions)
+- ✅ Prerequisite validation
 
 ## 🎯 Features
 
 ### Data Integration
 - ✅ **HiBob API**: Auto-import employee data, bonus, and compensation history
-- ✅ **Aon Market Data**: P40, P50, P62.5, P75, P90 percentiles
+- ✅ **Aon Market Data**: **P10, P25, P40, P50, P62.5, P75, P90** percentiles
 - ✅ **Multi-Region**: US, UK, India with FX conversion
 - ✅ **Smart Mapping**: Job families, titles, and employee levels
 
