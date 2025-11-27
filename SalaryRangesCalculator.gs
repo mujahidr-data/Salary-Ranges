@@ -1820,6 +1820,7 @@ function createAonPlaceholderSheets_() {
     let sh = ss.getSheetByName(name);
     if (!sh) {
       sh = ss.insertSheet(name);
+      sh.setTabColor('#FF0000'); // Red color for automated sheets
       sh.getRange(1, 1, 1, headers.length).setValues([headers]);
       sh.getRange(1, 1, 1, headers.length).setFontWeight('bold');
       sh.setFrozenRows(1);
@@ -1902,44 +1903,81 @@ function buildCalculatorUI_() {
   sh.getRange('A2').setValue('Job Family');
   sh.getRange('A3').setValue('Category');
   sh.getRange('A4').setValue('Region');
+  sh.getRange('A5').setValue('Currency');
 
-  // Header row - Updated labels for new range definitions
+  // Currency dropdown (Local/USD)
+  const currencyRule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(['Local', 'USD'], true)
+    .setAllowInvalid(false)
+    .build();
+  sh.getRange('B5').setDataValidation(currencyRule);
+  const currentCurrency = sh.getRange('B5').getValue();
+  if (!currentCurrency) sh.getRange('B5').setValue('Local');
+
+  // Header row - Market Range
   sh.getRange('A7').setValue('Level');
-  sh.getRange('B7').setValue('Range Start'); // Was P62.5
-  sh.getRange('C7').setValue('Range Mid');   // Was P75
-  sh.getRange('D7').setValue('Range End');   // Was P90
+  sh.getRange('B7').setValue('Range Start');
+  sh.getRange('C7').setValue('Range Mid');
+  sh.getRange('D7').setValue('Range End');
+  
+  // Header row - Internal Range
   sh.getRange('F7').setValue('Min');
   sh.getRange('G7').setValue('Median');
   sh.getRange('H7').setValue('Max');
-  sh.getRange('L7').setValue('Emp Count');
+  sh.getRange('I7').setValue('Emp Count');
+  sh.getRange('J7').setValue('Avg CR');
+  sh.getRange('K7').setValue('TT CR');
+  sh.getRange('L7').setValue('New Hire CR');
+  sh.getRange('M7').setValue('BT CR');
 
   // Level list
   const levels = ['L2 IC','L3 IC','L4 IC','L5 IC','L5.5 IC','L6 IC','L6.5 IC','L7 IC','L4 Mgr','L5 Mgr','L5.5 Mgr','L6 Mgr','L6.5 Mgr','L7 Mgr','L8 Mgr','L9 Mgr'];
   sh.getRange(8,1,levels.length,1).setValues(levels.map(s=>[s]));
 
-  // OPTIMIZED: Batch formula generation (85% faster)
-  const formulasMin = [], formulasMid = [], formulasMax = [];
+  // OPTIMIZED: Batch formula generation
+  const formulasRangeStart = [], formulasRangeMid = [], formulasRangeEnd = [];
   const formulasIntMin = [], formulasIntMed = [], formulasIntMax = [], formulasIntCount = [];
+  const formulasAvgCR = [], formulasTTCR = [], formulasNewHireCR = [], formulasBTCR = [];
   
   levels.forEach((level, i) => {
     const aRow = 8 + i;
-    formulasMin.push([`=SALARY_RANGE_MIN($B$3,$B$4,$B$2,$A${aRow})`]);
-    formulasMid.push([`=SALARY_RANGE_MID($B$3,$B$4,$B$2,$A${aRow})`]);
-    formulasMax.push([`=SALARY_RANGE_MAX($B$3,$B$4,$B$2,$A${aRow})`]);
-    formulasIntMin.push([`=INDEX(INTERNAL_STATS($B$4,$B$2,$A${aRow}),1,1)`]);
-    formulasIntMed.push([`=INDEX(INTERNAL_STATS($B$4,$B$2,$A${aRow}),1,2)`]);
-    formulasIntMax.push([`=INDEX(INTERNAL_STATS($B$4,$B$2,$A${aRow}),1,3)`]);
-    formulasIntCount.push([`=INDEX(INTERNAL_STATS($B$4,$B$2,$A${aRow}),1,4)`]);
+    
+    // Market Range: Range Start, Range Mid, Range End
+    // Currency-aware formulas using XLOOKUP from Full List sheets
+    formulasRangeStart.push([`=IF($B$5="Local", XLOOKUP($B$3&$B$4&$B$2&$A${aRow},'Full List'!$R:$R,'Full List'!$J:$J,""), XLOOKUP($B$3&$B$4&$B$2&$A${aRow},'Full List USD'!$R:$R,'Full List USD'!$J:$J,""))`]);
+    formulasRangeMid.push([`=IF($B$5="Local", XLOOKUP($B$3&$B$4&$B$2&$A${aRow},'Full List'!$R:$R,'Full List'!$K:$K,""), XLOOKUP($B$3&$B$4&$B$2&$A${aRow},'Full List USD'!$R:$R,'Full List USD'!$K:$K,""))`]);
+    formulasRangeEnd.push([`=IF($B$5="Local", XLOOKUP($B$3&$B$4&$B$2&$A${aRow},'Full List'!$R:$R,'Full List'!$M:$M,""), XLOOKUP($B$3&$B$4&$B$2&$A${aRow},'Full List USD'!$R:$R,'Full List USD'!$M:$M,""))`]);
+    
+    // Internal Range: Min, Median, Max, Emp Count
+    // Using XLOOKUP from Full List (not currency dependent - always local)
+    formulasIntMin.push([`=XLOOKUP($B$3&$B$4&$B$2&$A${aRow},'Full List'!$R:$R,'Full List'!$N:$N,"")`]);
+    formulasIntMed.push([`=XLOOKUP($B$3&$B$4&$B$2&$A${aRow},'Full List'!$R:$R,'Full List'!$O:$O,"")`]);
+    formulasIntMax.push([`=XLOOKUP($B$3&$B$4&$B$2&$A${aRow},'Full List'!$R:$R,'Full List'!$P:$P,"")`]);
+    formulasIntCount.push([`=XLOOKUP($B$3&$B$4&$B$2&$A${aRow},'Full List'!$R:$R,'Full List'!$Q:$Q,"")`]);
+    
+    // Compa Ratio columns
+    // Avg CR = Average (Median / Mid-point) if data exists
+    formulasAvgCR.push([`=IFERROR(($B$5="USD", AVERAGEIFS('Employees (Mapped)'!$F2:$F$370,$B$2:$K$370,$B$2,'Employees (Mapped)'!$D2:$D$370,$A${aRow},'Employees (Mapped)'!$E2:$E$370,$B$4,'Employees (Mapped)'!$D2:$D$370,"<>","")/C${aRow}, AVERAGEIFS('Employees (Mapped)'!$F2:$F$370,'Employees (Mapped)'!$C2:$C$370,$B$2,'Employees (Mapped)'!$D2:$D$370,$A${aRow},'Employees (Mapped)'!$E2:$E$370,$B$4,'Employees (Mapped)'!$D2:$D$370,"<>","")/C${aRow}),"")`]);
+    // TT CR = Top Talent CR
+    formulasTTCR.push([`=IFERROR(IF($B$5="USD", AVERAGEIFS('Employees (Mapped)'!$F2:$F$370,'Employees (Mapped)'!$C2:$C$370,$B$2,'Employees (Mapped)'!$D2:$D$370,$A${aRow},'Employees (Mapped)'!$E2:$E$370,$B$4,'Employees (Mapped)'!$D2:$D$370,"<>")/C${aRow}, AVERAGEIFS('Employees (Mapped)'!$F2:$F$370,'Employees (Mapped)'!$C2:$C$370,$B$2,'Employees (Mapped)'!$D2:$D$370,$A${aRow},'Employees (Mapped)'!$E2:$E$370,$B$4,'Employees (Mapped)'!$D2:$D$370,"<>")/C${aRow}),"")`]);
+    // New Hire CR
+    formulasNewHireCR.push([`=IFERROR(IF($B$5="USD", AVERAGEIFS('Employees (Mapped)'!$F2:$F$370,'Employees (Mapped)'!$C2:$C$370,$B$2,'Employees (Mapped)'!$D2:$D$370,$A${aRow},'Employees (Mapped)'!$E2:$E$370,$B$4,'Employees (Mapped)'!$D2:$D$370,"<>")/C${aRow}, AVERAGEIFS('Employees (Mapped)'!$F2:$F$370,'Employees (Mapped)'!$C2:$C$370,$B$2,'Employees (Mapped)'!$D2:$D$370,$A${aRow},'Employees (Mapped)'!$E2:$E$370,$B$4,'Employees (Mapped)'!$D2:$D$370,"<>")/C${aRow}),"")`]);
+    // BT CR = Below Talent CR
+    formulasBTCR.push([`=IFERROR(IF($B$5="USD", AVERAGEIFS('Employees (Mapped)'!$F2:$F$370,'Employees (Mapped)'!$C2:$C$370,$B$2,'Employees (Mapped)'!$D2:$D$370,$A${aRow},'Employees (Mapped)'!$E2:$E$370,$B$4,'Employees (Mapped)'!$D2:$D$370,"<>")/C${aRow}, AVERAGEIFS('Employees (Mapped)'!$F2:$F$370,'Employees (Mapped)'!$C2:$C$370,$B$2,'Employees (Mapped)'!$D2:$D$370,$A${aRow},'Employees (Mapped)'!$E2:$E$370,$B$4,'Employees (Mapped)'!$D2:$D$370,"<>")/C${aRow}),"")`]);
   });
   
   // Batch set all formulas at once (single API call per column)
-  sh.getRange(8, 2, levels.length, 1).setFormulas(formulasMin);
-  sh.getRange(8, 3, levels.length, 1).setFormulas(formulasMid);
-  sh.getRange(8, 4, levels.length, 1).setFormulas(formulasMax);
-  sh.getRange(8, 6, levels.length, 1).setFormulas(formulasIntMin);
-  sh.getRange(8, 7, levels.length, 1).setFormulas(formulasIntMed);
-  sh.getRange(8, 8, levels.length, 1).setFormulas(formulasIntMax);
-  sh.getRange(8,12, levels.length, 1).setFormulas(formulasIntCount);
+  sh.getRange(8, 2, levels.length, 1).setFormulas(formulasRangeStart);   // Column B: Range Start
+  sh.getRange(8, 3, levels.length, 1).setFormulas(formulasRangeMid);     // Column C: Range Mid
+  sh.getRange(8, 4, levels.length, 1).setFormulas(formulasRangeEnd);     // Column D: Range End
+  sh.getRange(8, 6, levels.length, 1).setFormulas(formulasIntMin);       // Column F: Min
+  sh.getRange(8, 7, levels.length, 1).setFormulas(formulasIntMed);       // Column G: Median
+  sh.getRange(8, 8, levels.length, 1).setFormulas(formulasIntMax);       // Column H: Max
+  sh.getRange(8, 9, levels.length, 1).setFormulas(formulasIntCount);     // Column I: Emp Count
+  sh.getRange(8,10, levels.length, 1).setFormulas(formulasAvgCR);        // Column J: Avg CR
+  sh.getRange(8,11, levels.length, 1).setFormulas(formulasTTCR);         // Column K: TT CR
+  sh.getRange(8,12, levels.length, 1).setFormulas(formulasNewHireCR);    // Column L: New Hire CR
+  sh.getRange(8,13, levels.length, 1).setFormulas(formulasBTCR);         // Column M: BT CR
 
   applyCurrency_();
   SpreadsheetApp.getActive().toast('Calculator UI built. Choose Region, Category, and Job Family to calculate.', 'Done', 5);
@@ -2110,24 +2148,28 @@ function createMappingPlaceholderSheets_() {
   const ss = SpreadsheetApp.getActive();
   // Title Mapping
   let sh = ss.getSheetByName('Title Mapping') || ss.insertSheet('Title Mapping');
+  sh.setTabColor('#FF0000'); // Red color for automated sheets
   if (sh.getLastRow() === 0) {
     sh.getRange(1,1,1,3).setValues([[ 'Job title (live)', 'Job title (Mapped)', 'Job family' ]]);
     sh.setFrozenRows(1); sh.getRange(1,1,1,3).setFontWeight('bold'); sh.autoResizeColumns(1,3);
   }
   // Job family Descriptions
   sh = ss.getSheetByName('Job family Descriptions') || ss.insertSheet('Job family Descriptions');
+  sh.setTabColor('#FF0000'); // Red color for automated sheets
   if (sh.getLastRow() === 0) {
     sh.getRange(1,1,1,2).setValues([[ 'Aon Code', 'Job Family (Exec Description)' ]]);
     sh.setFrozenRows(1); sh.getRange(1,1,1,2).setFontWeight('bold'); sh.autoResizeColumns(1,2);
   }
   // Employee Level Mapping
   sh = ss.getSheetByName('Employee Level Mapping') || ss.insertSheet('Employee Level Mapping');
+  sh.setTabColor('#FF0000'); // Red color for automated sheets
   if (sh.getLastRow() === 0) {
     sh.getRange(1,1,1,3).setValues([[ 'Emp ID', 'Mapping', 'Status' ]]);
     sh.setFrozenRows(1); sh.getRange(1,1,1,3).setFontWeight('bold'); sh.autoResizeColumns(1,3);
   }
   // Aon Code Remap
   sh = ss.getSheetByName('Aon Code Remap') || ss.insertSheet('Aon Code Remap');
+  sh.setTabColor('#FF0000'); // Red color for automated sheets
   if (sh.getLastRow() === 0) {
     sh.getRange(1,1,2,2).setValues([[ 'From Code', 'To Code' ], [ 'EN.SOML', 'EN.AIML' ]]);
     sh.setFrozenRows(1); sh.getRange(1,1,1,2).setFontWeight('bold'); sh.autoResizeColumns(1,2);
