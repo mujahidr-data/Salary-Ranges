@@ -748,6 +748,9 @@ function AON_P90(region, family, ciqLevel)  { return _aonPick_(region, family, c
  * Category-based salary ranges (2 categories only)
  * X0 = Engineering/Product: P25 (start) → P50 (mid) → P90 (end)
  * Y1 = Everyone Else: P10 (start) → P40 (mid) → P62.5 (end)
+ * 
+ * Fallback logic: If a percentile is missing, use the next higher percentile
+ * Example: P10 missing → use P25, P25 missing → use P40, etc.
  ********************************/
 function _rangeByCategory_(category, region, family, ciqLevel) {
   const cat = String(category || '').trim().toUpperCase();
@@ -755,16 +758,46 @@ function _rangeByCategory_(category, region, family, ciqLevel) {
 
   if (cat === 'X0') {
     // X0 (Engineering/Product): Range Start=P25, Range Mid=P50, Range End=P90
-    const min = AON_P25(region, family, ciqLevel);
-    const mid = AON_P50(region, family, ciqLevel);
-    const max = AON_P90(region, family, ciqLevel);
+    let min = AON_P25(region, family, ciqLevel);
+    let mid = AON_P50(region, family, ciqLevel);
+    let max = AON_P90(region, family, ciqLevel);
+    
+    // Fallback: P25 missing → use P40
+    if (!min || min === '') {
+      min = AON_P40(region, family, ciqLevel);
+      if (!min || min === '') min = AON_P50(region, family, ciqLevel);
+    }
+    // Fallback: P50 missing → use P625
+    if (!mid || mid === '') {
+      mid = AON_P625(region, family, ciqLevel);
+      if (!mid || mid === '') mid = AON_P75(region, family, ciqLevel);
+    }
+    // Fallback: P90 missing → no fallback (already highest)
+    
     return { min, mid, max };
   }
   if (cat === 'Y1') {
     // Y1 (Everyone Else): Range Start=P10, Range Mid=P40, Range End=P62.5
-    const min = AON_P10(region, family, ciqLevel);
-    const mid = AON_P40(region, family, ciqLevel);
-    const max = AON_P625(region, family, ciqLevel);
+    let min = AON_P10(region, family, ciqLevel);
+    let mid = AON_P40(region, family, ciqLevel);
+    let max = AON_P625(region, family, ciqLevel);
+    
+    // Fallback: P10 missing → use P25
+    if (!min || min === '') {
+      min = AON_P25(region, family, ciqLevel);
+      if (!min || min === '') min = AON_P40(region, family, ciqLevel);
+    }
+    // Fallback: P40 missing → use P50
+    if (!mid || mid === '') {
+      mid = AON_P50(region, family, ciqLevel);
+      if (!mid || mid === '') mid = AON_P625(region, family, ciqLevel);
+    }
+    // Fallback: P62.5 missing → use P75
+    if (!max || max === '') {
+      max = AON_P75(region, family, ciqLevel);
+      if (!max || max === '') max = AON_P90(region, family, ciqLevel);
+    }
+    
     return { min, mid, max };
   }
 
@@ -1725,11 +1758,21 @@ function _getRangeFromFullList_(category, region, family, ciqLevel) {
   const rec = idx[`${exec}${ciq}${reg}`];
   if (!rec) return { min:'', mid:'', max:'' };
   const pick = (cat) => {
-    // Updated range definitions:
-    // X0 (Engineering/Product): P25 → P50 → P90
-    // Y1 (Everyone Else): P10 → P40 → P62.5
-    if (cat === 'X0') return { min: rec.p25, mid: rec.p50, max: rec.p90 };
-    if (cat === 'Y1') return { min: rec.p10, mid: rec.p40, max: rec.p625 };
+    // Updated range definitions with fallback logic:
+    // X0 (Engineering/Product): P25 → P50 → P90 (with fallbacks)
+    // Y1 (Everyone Else): P10 → P40 → P62.5 (with fallbacks)
+    if (cat === 'X0') {
+      const min = rec.p25 || rec.p40 || rec.p50 || '';
+      const mid = rec.p50 || rec.p625 || rec.p75 || '';
+      const max = rec.p90 || '';
+      return { min, mid, max };
+    }
+    if (cat === 'Y1') {
+      const min = rec.p10 || rec.p25 || rec.p40 || '';
+      const mid = rec.p40 || rec.p50 || rec.p625 || '';
+      const max = rec.p625 || rec.p75 || rec.p90 || '';
+      return { min, mid, max };
+    }
     return { min:'', mid:'', max:'' };
   };
   const out = pick(String(category || '').trim().toUpperCase());
