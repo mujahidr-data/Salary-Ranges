@@ -14,15 +14,16 @@
  * - Persistent legacy mapping storage
  * - Interactive calculator UI
  * 
- * @version 4.7.1
+ * @version 4.7.2
  * @date 2025-11-27
- * @changelog v4.7.1 - Enhanced: Level Anomaly message clarity
- *   - Was: "Expected P6, got P2" (unclear what this means)
- *   - Now: "Bob: L6 IC (P6) ≠ Aon: P2" (clearly shows mismatch)
- *   - Makes it obvious when Bob's Job Level doesn't match Aon Code level
- * @previous v4.7.0 - Feature: Auto-average .5 levels + Job Level from Bob Base Data
- *   - Feature 1: .5 levels (L5.5 IC, L6.5 IC, L5.5 Mgr, L6.5 Mgr) now auto-averaged
- *   - Feature 2: Level column in Employees Mapped ALWAYS from Bob Base Data
+ * @changelog v4.7.2 - Tool: Rebuild Calculator Formulas
+ *   - Added "Rebuild Calculator Formulas" to Tools menu
+ *   - Fixes #REF! errors when switching calculator to USD
+ *   - Issue: Calculators created before "Full List USD" → formulas cached #REF!
+ *   - Solution: Regenerate all XLOOKUP formulas in both calculators
+ *   - Also clears caches to ensure fresh data
+ * @previous v4.7.1 - Enhanced: Level Anomaly message clarity
+ *   - Clearer anomaly messages: "Bob: L6 IC (P6) ≠ Aon: P2"
  *   - Bug: Internal stats included inactive employees (exits after Jan 1, 2024)
  *   - Fix: Cross-reference with Base Data to check Active/Inactive status
  *   - Build active status index from Base Data ONCE (Map: empID → isActive)
@@ -5589,6 +5590,7 @@ function onOpen() {
     .addItem('⏰ Import Bob Data (Headless)', 'importBobDataHeadless')
     .addItem('🔔 Setup Daily Import Trigger', 'setupDailyImportTrigger')
     .addSeparator()
+    .addItem('🔄 Rebuild Calculator Formulas', 'rebuildCalculatorFormulas')
     .addItem('💱 Apply Currency Format', 'applyCurrency_')
     .addItem('🗑️ Clear All Caches', 'clearAllCaches_')
     .addSeparator()
@@ -5673,6 +5675,62 @@ function setupDailyImportTrigger() {
     );
   } catch (e) {
     ui.alert('❌ Error', 'Failed to create trigger: ' + e.message, ui.ButtonSet.OK);
+  }
+}
+
+/**
+ * Rebuild Calculator Formulas
+ * Fixes #REF! errors by regenerating all formulas in both calculator sheets
+ * Use this if:
+ * - Calculator shows #REF! errors after switching to USD
+ * - Formulas were created before Full List USD existed
+ * - After major data structure changes
+ */
+function rebuildCalculatorFormulas() {
+  const ui = SpreadsheetApp.getUi();
+  
+  const response = ui.alert(
+    '🔄 Rebuild Calculator Formulas',
+    'This will regenerate all formulas in both calculator sheets:\n\n' +
+    '• Engineering and Product (X0)\n' +
+    '• Everyone Else (Y1)\n\n' +
+    'This fixes:\n' +
+    '✓ #REF! errors when switching to USD\n' +
+    '✓ Broken XLOOKUP references\n' +
+    '✓ Formula inconsistencies\n\n' +
+    'Current data and selections will be preserved.\n\n' +
+    'Continue?',
+    ui.ButtonSet.YES_NO
+  );
+  
+  if (response !== ui.Button.YES) {
+    ui.alert('Cancelled', 'No changes were made.', ui.ButtonSet.OK);
+    return;
+  }
+  
+  try {
+    SpreadsheetApp.getActive().toast('Rebuilding calculators...', 'Working', 3);
+    
+    // Rebuild both calculator UIs
+    buildCalculatorUI_();
+    buildCalculatorUIForY1_();
+    
+    // Clear caches to ensure fresh data
+    clearAllCaches_();
+    
+    ui.alert(
+      '✅ Calculators Rebuilt!',
+      'Both calculator sheets have been updated:\n\n' +
+      '✓ Engineering and Product (X0)\n' +
+      '✓ Everyone Else (Y1)\n\n' +
+      'All formulas regenerated with correct references.\n' +
+      'Caches cleared for fresh data.\n\n' +
+      'Test by switching Currency to USD.',
+      ui.ButtonSet.OK
+    );
+  } catch (e) {
+    ui.alert('❌ Error', 'Failed to rebuild calculators: ' + e.message, ui.ButtonSet.OK);
+    Logger.log('ERROR in rebuildCalculatorFormulas: ' + e.message + '\n' + e.stack);
   }
 }
 
