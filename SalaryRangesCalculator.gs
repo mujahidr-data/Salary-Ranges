@@ -14,9 +14,19 @@
  * - Persistent legacy mapping storage
  * - Interactive calculator UI
  * 
- * @version 4.6.8
+ * @version 4.7.0
  * @date 2025-11-27
- * @changelog v4.6.8 - CRITICAL HOTFIX: Internal stats now ACTIVE employees only
+ * @changelog v4.7.0 - Feature: Auto-average .5 levels + Job Level from Bob Base Data
+ *   - Feature 1: .5 levels (L5.5 IC, L6.5 IC, L5.5 Mgr, L6.5 Mgr) now auto-averaged
+ *     - If Aon data doesn't have .5 level, calculate as (lower + upper) / 2
+ *     - Example: L5.5 IC = average of L5 IC and L6 IC
+ *     - Applies to all percentiles (P10, P25, P40, P50, P62.5, P75, P90)
+ *   - Feature 2: Level column in Employees Mapped ALWAYS from Bob Base Data
+ *     - Was: Took level from mapping (approved/legacy/title-based)
+ *     - Now: Always uses jobLevelFromBob (actual employee level)
+ *     - Mapping only provides Aon Code, not Level
+ *     - More accurate: employees can be at different levels than legacy mapping
+ * @previous v4.6.8 - CRITICAL HOTFIX: Internal stats now ACTIVE employees only
  *   - Bug: Internal stats included inactive employees (exits after Jan 1, 2024)
  *   - Fix: Cross-reference with Base Data to check Active/Inactive status
  *   - Build active status index from Base Data ONCE (Map: empID → isActive)
@@ -4312,14 +4322,17 @@ function syncEmployeesMappedSheet_() {
     const salary = iSalary >= 0 ? row[iSalary] : '';
     const startDate = iStart >= 0 ? row[iStart] : '';
     
-    let aonCode = '', ciqLevel = '', confidence = '', source = '', status = 'Needs Review';
+    let aonCode = '', confidence = '', source = '', status = 'Needs Review';
     let jobFamilyDesc = '';
+    
+    // ALWAYS use Job Level from Bob Base Data (don't override with mapping level)
+    let ciqLevel = jobLevelFromBob || '';
     
     // Priority 1: Check if existing mapping is Approved
     const prev = existing.get(empID);
     if (prev && prev.status === 'Approved') {
       aonCode = prev.aonCode;
-      ciqLevel = prev.level;
+      // Note: Level comes from Bob, not from mapping
       confidence = prev.confidence;
       source = prev.source;
       status = 'Approved';
@@ -4330,7 +4343,7 @@ function syncEmployeesMappedSheet_() {
       const legacy = allLegacyMappings.get(empID);
       if (legacy) {
         aonCode = legacy.aonCode;
-        ciqLevel = legacy.ciqLevel;
+        // Note: Level comes from Bob, not from legacy mapping
         confidence = '100%';
         source = 'Legacy';
         // If legacy mapping has status, preserve it (handles approved mappings from persistent storage)
@@ -4342,16 +4355,16 @@ function syncEmployeesMappedSheet_() {
       else if (title && titleMap.has(title)) {
         const mapping = titleMap.get(title);
         aonCode = mapping.aonCode;
-        ciqLevel = mapping.level;
+        // Note: Level comes from Bob, not from title mapping
         confidence = '95%';
         source = 'Title-Based';
         status = 'Needs Review';
         titleBasedCount++;
       }
       // Priority 4: Preserve existing if present (even if not approved)
-      else if (prev && prev.aonCode && prev.level) {
+      else if (prev && prev.aonCode) {
         aonCode = prev.aonCode;
-        ciqLevel = prev.level;
+        // Note: Level comes from Bob, not from previous mapping
         confidence = prev.confidence || '50%';
         source = prev.source || 'Manual';
         status = prev.status || 'Needs Review';
@@ -4359,18 +4372,12 @@ function syncEmployeesMappedSheet_() {
       }
       // No mapping found
       else {
-        // Use Job Level from Bob Base Data even if unmapped
-        ciqLevel = jobLevelFromBob || '';
+        // Level already set from Bob Base Data above
         confidence = '0%';
         source = 'Unmapped';
         status = 'Needs Review';
         needsReviewCount++;
       }
-    }
-    
-    // If still no level, use Job Level from Bob Base Data as fallback
-    if (!ciqLevel && jobLevelFromBob) {
-      ciqLevel = jobLevelFromBob;
     }
     
     // Get Job Family Description
@@ -5099,9 +5106,48 @@ function rebuildFullListAllCombinations_() {
       
       for (const ciqLevel of levels) {
         totalCombinations++;
+        
         // OPTIMIZED: Get market percentiles from pre-loaded cache (instant lookup!)
         const aonKey = `${region}|${aonCode}|${ciqLevel}`;
-        const percentiles = aonCache.get(aonKey) || {};
+        let percentiles = aonCache.get(aonKey) || {};
+        
+        // Handle .5 levels: If data not found, average neighboring levels
+        if (ciqLevel.includes('.5') && (!percentiles.p25 && !percentiles.p625)) {
+          const isIC = ciqLevel.includes('IC');
+          const levelNum = parseFloat(ciqLevel.match(/L([\d.]+)/)[1]);
+          const lowerLevel = `L${Math.floor(levelNum)} ${isIC ? 'IC' : 'Mgr'}`;
+          const upperLevel = `L${Math.ceil(levelNum)} ${isIC ? 'IC' : 'Mgr'}`;
+          
+          const lowerKey = `${region}|${aonCode}|${lowerLevel}`;
+          const upperKey = `${region}|${aonCode}|${upperLevel}`;
+          const lowerPct = aonCache.get(lowerKey) || {};
+          const upperPct = aonCache.get(upperKey) || {};
+          
+          // Average each percentile
+          const avg = (a, b) => {
+            const numA = toNumber(a);
+            const numB = toNumber(b);
+            if (numA && numB) return (numA + numB) / 2;
+            if (numA) return numA;
+            if (numB) return numB;
+            return '';
+          };
+          
+          percentiles = {
+            p10: avg(lowerPct.p10, upperPct.p10),
+            p25: avg(lowerPct.p25, upperPct.p25),
+            p40: avg(lowerPct.p40, upperPct.p40),
+            p50: avg(lowerPct.p50, upperPct.p50),
+            p625: avg(lowerPct.p625, upperPct.p625),
+            p75: avg(lowerPct.p75, upperPct.p75),
+            p90: avg(lowerPct.p90, upperPct.p90)
+          };
+          
+          if (totalCombinations <= 20 && ciqLevel.includes('.5')) {
+            Logger.log(`Averaged ${ciqLevel}: ${lowerLevel} + ${upperLevel} → P25=${percentiles.p25}, P625=${percentiles.p625}`);
+          }
+        }
+        
         const p10 = percentiles.p10 || '';
         const p25 = percentiles.p25 || '';
         const p40 = percentiles.p40 || '';
