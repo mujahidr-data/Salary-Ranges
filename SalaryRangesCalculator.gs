@@ -14,14 +14,16 @@
  * - Persistent legacy mapping storage
  * - Interactive calculator UI
  * 
- * @version 4.7.5
+ * @version 4.7.6
  * @date 2025-11-27
- * @changelog v4.7.5 - Data: Update HR.TMTA → HR.TATA (job family code change)
+ * @changelog v4.7.6 - CRITICAL FIX: Apply Currency Format now works with new calculator
+ *   - Fixed header detection to recognize "Range Start/Mid/End" (not just old "P62.5/P75/P90")
+ *   - Now works with both X0 (Engineering) and Y1 (Everyone Else) calculators
+ *   - Added success toast: "✅ Applied ₹/$£ format to X columns"
+ *   - Shows detected region and sheet name
+ *   - Issue: Function was looking for old column headers, couldn't find new format
+ * @previous v4.7.5 - Data: Update HR.TMTA → HR.TATA (job family code change)
  *   - Renamed all instances of HR.TMTA to HR.TATA
- *   - Updated 11 legacy mappings (employee assignments)
- *   - Updated 1 Lookup sheet entry (job family description)
- *   - Affects: HR - Talent Acquisition job family
- * @previous v4.7.4 - Enhanced: Update Legacy Mappings with change detection
  *   - Fixed misleading "0 new mappings" message when updating existing mappings
  *   - Now shows: "X updated, Y new" instead of just "Y new"
  *   - Added change detection: Only updates if Aon Code or Level actually changed
@@ -1154,29 +1156,72 @@ function applyCurrency_() {
   };
   const cfmt = formats[region] || '#,##0;#,##0;;@';
 
-  // Find header row (search first 30 rows for Level/P62.5/P75/P90)
+  // Find header row (search first 30 rows for Level + Range Start/Mid/End OR Min/Median/Max)
   const maxHdrRows = Math.min(30, sh.getLastRow());
   let headerRow = -1; let headers = [];
   for (let r=1; r<=maxHdrRows; r++) {
     const row = sh.getRange(r,1,1,Math.max(20, sh.getLastColumn())).getDisplayValues()[0].map(v=>String(v||'').trim());
-    if (row.some(v=>/^Level$/i.test(v)) && row.some(v=>/^P\s*62\.?5$/i.test(v)) && row.some(v=>/^P\s*75$/i.test(v))) { headerRow = r; headers = row; break; }
+    // Check for new format (Level + Range Start/Mid/End) OR old format (Level + P62.5)
+    const hasLevel = row.some(v=>/^Level$/i.test(v));
+    const hasNewFormat = row.some(v=>/^Range\s*Start$/i.test(v)) && row.some(v=>/^Range\s*Mid$/i.test(v));
+    const hasOldFormat = row.some(v=>/^P\s*62\.?5$/i.test(v));
+    
+    if (hasLevel && (hasNewFormat || hasOldFormat)) { 
+      headerRow = r; 
+      headers = row; 
+      break; 
+    }
   }
-  if (headerRow === -1) return; // nothing to format
+  if (headerRow === -1) {
+    SpreadsheetApp.getActive().toast('⚠️ Could not find calculator headers. Make sure you\'re on a calculator sheet.', 'Apply Currency', 5);
+    return;
+  }
 
   // Locate columns by label
   const colIndex = (labelRegex) => headers.findIndex(h => new RegExp(labelRegex,'i').test(h)) + 1;
-  const cP625 = colIndex('^P\s*62\.?5$');
-  const cP75  = colIndex('^P\s*75$');
-  const cP90  = colIndex('^P\s*90$');
+  
+  // New format columns (Range Start/Mid/End)
+  const cRangeStart = colIndex('^Range\\s*Start$');
+  const cRangeMid = colIndex('^Range\\s*Mid$');
+  const cRangeEnd = colIndex('^Range\\s*End$');
+  
+  // Old format columns (P62.5, P75, P90)
+  const cP625 = colIndex('^P\\s*62\\.?5$');
+  const cP75  = colIndex('^P\\s*75$');
+  const cP90  = colIndex('^P\\s*90$');
+  
+  // Internal stats columns (same in both formats)
   const cMin  = colIndex('^Min$');
   const cMed  = colIndex('^Median$');
   const cMax  = colIndex('^Max$');
-  const cEmp  = colIndex('^Emp\s*Count$');
+  const cEmp  = colIndex('^Emp\\s*Count$');
+  
   const lastRow = Math.max(headerRow+1, sh.getLastRow());
 
   const maybeFormatCol = (c, fmt) => { if (c > 0) _setFmtIfNeeded_(sh.getRange(headerRow+1, c, lastRow - headerRow, 1), fmt); };
-  [cP625, cP75, cP90, cMin, cMed, cMax].forEach(c => maybeFormatCol(c, cfmt));
-  if (cEmp > 0) maybeFormatCol(cEmp, '0;0;;@');
+  
+  // Format all relevant columns (new format OR old format)
+  let formattedCount = 0;
+  [cRangeStart, cRangeMid, cRangeEnd, cP625, cP75, cP90, cMin, cMed, cMax].forEach(c => {
+    if (c > 0) {
+      maybeFormatCol(c, cfmt);
+      formattedCount++;
+    }
+  });
+  if (cEmp > 0) {
+    maybeFormatCol(cEmp, '0;0;;@');
+    formattedCount++;
+  }
+  
+  // Show success message
+  const currencySymbol = region === 'India' ? '₹' : region === 'UK' ? '£' : '$';
+  SpreadsheetApp.getActive().toast(
+    `✅ Applied ${currencySymbol} format to ${formattedCount} column${formattedCount === 1 ? '' : 's'}\n` +
+    `Region: ${region || 'Default'}\n` +
+    `Sheet: ${sh.getName()}`,
+    'Currency Format',
+    5
+  );
 }
 
 /********************************
