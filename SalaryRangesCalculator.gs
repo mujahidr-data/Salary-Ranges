@@ -14,9 +14,15 @@
  * - Persistent legacy mapping storage
  * - Interactive calculator UI
  * 
- * @version 4.6.5-debug
+ * @version 4.6.6
  * @date 2025-11-27
- * @changelog v4.6.5-debug - Added logging for calculator dropdown creation issue
+ * @changelog v4.6.6 - CRITICAL HOTFIX: Preserve approved mappings across Fresh Build
+ *   - Bug: After approving mappings + running Fresh Build, all mappings reset to "Needs Review"
+ *   - Root cause: Legacy mappings loaded from storage had no 'status' field
+ *   - Fix 1: _loadAllLegacyMappings_() now sets status: 'Approved' for all loaded mappings
+ *   - Fix 2: syncEmployeesMappedSheet_() uses legacy.status if present (defaults to 'Legacy')
+ *   - Result: Approved mappings stay approved after Fresh Build or Import Bob Data
+ * @previous v4.6.5-debug - Added logging for calculator dropdown creation issue
  *   - Issue: Job Family dropdown not appearing in calculator sheets
  *   - Added logging to _getExecDescMap_() to show Lookup sheet reading
  *   - Added logging to buildCalculatorUI_() to show X0 families found
@@ -3508,7 +3514,8 @@ function _loadAllLegacyMappings_() {
       const ciqLevel = _parseLevelToken_(levelToken);
       
       if (aonCode && ciqLevel) {
-        legacyMap.set(empID, {aonCode, ciqLevel, source: 'Legacy'});
+        // All mappings in persistent storage came from approved mappings, so mark as Approved
+        legacyMap.set(empID, {aonCode, ciqLevel, source: 'Legacy', status: 'Approved'});
       }
     });
     return legacyMap;
@@ -3532,7 +3539,8 @@ function _loadAllLegacyMappings_() {
       const ciqLevel = _parseLevelToken_(levelToken);
       
       if (aonCode && ciqLevel) {
-        legacyMap.set(empID, {aonCode, ciqLevel, source: 'Legacy'});
+        // All mappings in Legacy Mappings sheet came from approved mappings, so mark as Approved
+        legacyMap.set(empID, {aonCode, ciqLevel, source: 'Legacy', status: 'Approved'});
       }
     });
   }
@@ -4284,7 +4292,9 @@ function syncEmployeesMappedSheet_() {
         ciqLevel = legacy.ciqLevel;
         confidence = '100%';
         source = 'Legacy';
-        status = 'Needs Review'; // Even legacy needs review
+        // If legacy mapping has status, preserve it (handles approved mappings from persistent storage)
+        // Otherwise default to "Legacy" (not "Needs Review" since these came from approved historical data)
+        status = legacy.status || 'Legacy';
         legacyCount++;
       }
       // Priority 3: Title-based suggestion
