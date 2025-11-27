@@ -13,16 +13,9 @@
  * - Job family and title mapping
  * - Interactive calculator UI
  * 
- * @version 3.2.0-OPTIMIZED
- * @date 2025-11-27
- * @changelog v3.2.0 - Performance optimizations (40-60% faster execution)
- *   - Consolidated duplicate helper functions
- *   - Added missing Bob import functions  
- *   - Optimized sheet reads with comprehensive caching
- *   - Batch formula generation (85% faster UI build)
- *   - Simplified cache key generation
- *   - Added magic number constants for maintainability
- * @previous v3.1.0 - Added P10/P25 support, simplified menu, added Quick Setup
+ * @version 3.1.0
+ * @date 2025-11-13
+ * @changelog v3.1.0 - Added P10/P25 support, simplified menu, added Quick Setup
  * 
  * Aon Data Source: https://drive.google.com/drive/folders/1bTogiTF18CPLHLZwJbDDrZg0H3SZczs-
  */
@@ -53,52 +46,44 @@ const REGION_TAB = {
   'UK': 'Aon UK London - 2025'
 };
 
-// ============================================================================
-// CONSTANTS
-// ============================================================================
-
-const CACHE_TTL = 600; // 10 minutes (600 seconds)
+const CACHE_TTL = 600; // 10 minutes
 const ALLOWED_EMP_TYPES = new Set(["Permanent", "Regular Full-Time"]);
-const TENURE_THRESHOLDS = {
-  FOUR_YEARS: 1460,   // 4 years in days
-  THREE_YEARS: 1095,  // 3 years
-  TWO_YEARS: 730,     // 2 years
-  ONE_HALF_YEARS: 545, // 1.5 years
-  ONE_YEAR: 365,      // 1 year
-  SIX_MONTHS: 180     // 6 months
-};
-const WRITE_COLS_LIMIT = 23; // Column W limit for Base Data sheet
+
 
 // ============================================================================
-// CONSOLIDATED HELPER FUNCTIONS (Optimized - No Duplicates)
+// HELPER FUNCTIONS
 // ============================================================================
-
-/**
- * Normalize string for case-insensitive comparison
- * @param {*} s - Value to normalize
- * @returns {string} Normalized string
- */
-function normalizeString(s) {
-  return String(s || "").toLowerCase().replace(/\s+/g, " ").trim();
-}
 
 /**
  * Find column index by trying multiple header aliases (case-insensitive)
  * @param {Array} headerRow - The header row array
  * @param {Array<string>} aliases - Array of possible column names
- * @param {boolean} throwError - Whether to throw error if not found (default: true)
- * @returns {number} Column index (0-based) or -1 if not found and throwError=false
+ * @returns {number} Column index or throws error if not found
  */
-function findColumnIndex(headerRow, aliases, throwError = true) {
-  const normalizedHeader = headerRow.map(normalizeString);
+function findCol(headerRow, aliases) {
+  const norm = (s) => String(s || "").toLowerCase().replace(/\s+/g, " ").trim();
+  const normalizedHeader = headerRow.map(norm);
   for (const alias of aliases) {
-    const idx = normalizedHeader.indexOf(normalizeString(alias));
-    if (idx !== -1) return idx;
+    const i = normalizedHeader.indexOf(norm(alias));
+    if (i !== -1) return i;
   }
-  if (throwError) {
-    throw new Error(
-      `Could not find any of the columns [${aliases.join(", ")}]. Available headers: ${headerRow.join(" | ")}`
-    );
+  throw new Error(
+    `Could not find any of the columns [${aliases.join(", ")}]. Available headers: ${headerRow.join(" | ")}`
+  );
+}
+
+/**
+ * Find column index (optional) - returns -1 if not found instead of throwing
+ * @param {Array} headerRow - The header row array
+ * @param {Array<string>} aliases - Array of possible column names
+ * @returns {number} Column index or -1 if not found
+ */
+function findColOptional(headerRow, aliases) {
+  const norm = (s) => String(s || "").toLowerCase().replace(/\s+/g, " ").trim();
+  const normalizedHeader = headerRow.map(norm);
+  for (const alias of aliases) {
+    const i = normalizedHeader.indexOf(norm(alias));
+    if (i !== -1) return i;
   }
   return -1;
 }
@@ -118,7 +103,7 @@ function safeCell(row, idx) {
  * @param {*} val - Value to convert
  * @returns {number} Numeric value or NaN
  */
-function toNumber(val) {
+function toNumberSafe(val) {
   if (val == null || val === "") return NaN;
   return Number(String(val).replace(/[^\d.-]/g, ""));
 }
@@ -176,15 +161,6 @@ function columnToLetter(col) {
     col = Math.floor((col - 1) / 26);
   }
   return letter;
-}
-
-/**
- * Simple fast hash for cache keys
- * @param {...string} parts - Parts to hash
- * @returns {string} Hash key
- */
-function hashKey(...parts) {
-  return parts.join('|');
 }
 
 /**
@@ -264,260 +240,6 @@ function writeSheetData(sheet, data, formats = {}) {
 // BOB DATA IMPORTS
 // ============================================================================
 
-/**
- * Imports base employee data from Bob API
- * Adapted from bob-salary-data project for salary-ranges
- */
-function importBobDataSimpleWithLookup() {
-  try {
-    const reportId = BOB_REPORT_IDS.BASE_DATA;
-    const sheetName = SHEET_NAMES.BASE_DATA;
-    const bonusSheetName = SHEET_NAMES.BONUS_HISTORY;
-    
-    Logger.log(`Starting import of ${sheetName}...`);
-    
-    // Fetch data from Bob API
-    const rows = fetchBobReport(reportId);
-    
-    // Cache normalized header for performance
-    const srcHeader = rows[0];
-    const normalizedHeader = srcHeader.map(normalizeString);
-    
-    const idxEmpId       = findColumnIndex(srcHeader, ["Employee ID", "Emp ID", "Employee Id"]);
-    const idxJobLevel    = findColumnIndex(srcHeader, ["Job Level", "Job level"]);
-    const idxBasePay     = findColumnIndex(srcHeader, ["Base Pay", "Base salary", "Base Salary"]);
-    const idxEmpType     = findColumnIndex(srcHeader, ["Employment Type", "Employment type"]);
-    const idxStartDate   = findColumnIndex(srcHeader, ["Start Date", "Start date", "Original start date", "Original Start Date"]);
-    const idxJobFamily   = findColumnIndex(srcHeader, ["Job Family Name"], false);
-    
-    let header = srcHeader.slice();
-    header = [...header, "Variable Type", "Variable %"];
-    if (idxJobFamily < 0) header.push("Job Family Name");
-    
-    const out = [header];
-  
-    // Process rows
-    for (let r = 1; r < rows.length; r++) {
-      const src = rows[r];
-      if (!src || !Array.isArray(src) || src.length === 0) continue;
-      
-      const row = src.slice();
-      const empType = safeCell(row, idxEmpType);
-      if (!ALLOWED_EMP_TYPES.has(empType)) continue;
-      
-      const empId  = safeCell(row, idxEmpId);
-      const jobLvl = safeCell(row, idxJobLevel);
-      if (!empId || !jobLvl) continue;
-      
-      // Ensure Employee ID is stored as text
-      const empIdNum = toNumber(empId);
-      if (isFinite(empIdNum)) {
-        row[idxEmpId] = String(empIdNum);
-      } else {
-        row[idxEmpId] = empId.trim();
-      }
-      
-      const basePayNum = toNumber(safeCell(row, idxBasePay));
-      if (!isFinite(basePayNum) || basePayNum === 0) continue;
-      
-      row[idxBasePay] = basePayNum;
-      row.push("", ""); // Variable Type, Variable %
-      if (idxJobFamily < 0) row.push(""); // Job Family Name placeholder
-      out.push(row);
-    }
-    
-    Logger.log(`Processed ${out.length - 1} rows for ${sheetName}`);
-    
-    // Write to sheet
-    const ss = SpreadsheetApp.getActiveSpreadsheet();
-    const sheet = getOrCreateSheet(ss, sheetName);
-    
-    sheet.clearContents();
-    sheet.getRange(1, 1, out.length, out[0].length).setValues(out);
-    
-    // Format columns
-    if (out.length > 1) {
-      const numRows = out.length - 1;
-      // Employee ID as text
-      sheet.getRange(2, idxEmpId + 1, numRows, 1).setNumberFormat("@");
-      // Base Pay as currency
-      sheet.getRange(2, idxBasePay + 1, numRows, 1).setNumberFormat("#,##0.00");
-    }
-    
-    sheet.autoResizeColumns(1, out[0].length);
-    Logger.log(`Successfully imported ${sheetName}`);
-    
-  } catch (error) {
-    Logger.log(`Error in importBobDataSimpleWithLookup: ${error.message}`);
-    SpreadsheetApp.getUi().alert(`Error importing Base Data: ${error.message}`);
-    throw error;
-  }
-}
-
-/**
- * Imports bonus history from Bob API, keeping only the latest entry per employee
- */
-function importBobBonusHistoryLatest() {
-  try {
-    const reportId = BOB_REPORT_IDS.BONUS_HISTORY;
-    const targetSheetName = SHEET_NAMES.BONUS_HISTORY;
-    
-    Logger.log(`Starting import of ${targetSheetName}...`);
-    
-    const rows = fetchBobReport(reportId);
-    const header = rows[0];
-    
-    const iEmpId   = findColumnIndex(header, ["Employee ID", "Emp ID", "Employee Id"]);
-    const iName    = findColumnIndex(header, ["Display name", "Emp Name", "Display Name", "Name"]);
-    const iEffDate = findColumnIndex(header, ["Effective date", "Effective Date", "Effective"]);
-    const iType    = findColumnIndex(header, ["Variable type", "Variable Type", "Type"]);
-    const iPct     = findColumnIndex(header, ["Commission/Bonus %", "Variable %", "Commission %", "Bonus %"]);
-    const iAmt     = findColumnIndex(header, ["Amount", "Variable Amount", "Commission/Bonus Amount"]);
-    const iCurr    = findColumnIndex(header, ["Variable Amount currency", "Amount currency", "Currency"], false);
-  
-    // Keep latest row per Emp ID
-    const latest = new Map();
-    for (let r = 1; r < rows.length; r++) {
-      const row = rows[r];
-      if (!row || row.length === 0) continue;
-      
-      let empId = safeCell(row, iEmpId);
-      const empIdNum = toNumber(empId);
-      empId = isFinite(empIdNum) ? String(empIdNum) : empId.trim();
-      
-      const effRaw = safeCell(row, iEffDate);
-      const effKey = (effRaw.match(/^\d{4}-\d{2}-\d{2}/) || [])[0];
-      
-      if (!empId || !effKey) continue;
-      
-      const existing = latest.get(empId);
-      if (!existing || effKey > existing.effKey) {
-        latest.set(empId, { row, effKey });
-      }
-    }
-  
-    const outHeader = ["Employee ID", "Display name", "Effective date", 
-                       "Variable type", "Commission/Bonus %", "Amount", "Amount currency"];
-    const out = [outHeader];
-  
-    latest.forEach(({ row, effKey }) => {
-      let empId = safeCell(row, iEmpId);
-      const empIdNum = toNumber(empId);
-      empId = isFinite(empIdNum) ? String(empIdNum) : empId.trim();
-      
-      const name  = safeCell(row, iName);
-      const type  = safeCell(row, iType);
-      const pctVal = toNumber(safeCell(row, iPct));
-      const amtVal = toNumber(safeCell(row, iAmt));
-      const curr   = iCurr === -1 ? "" : safeCell(row, iCurr);
-      
-      out.push([empId, name, effKey, type, 
-                isFinite(pctVal) ? pctVal : "", 
-                isFinite(amtVal) ? amtVal : "", curr]);
-    });
-  
-    // Write to sheet
-    const ss = SpreadsheetApp.getActiveSpreadsheet();
-    const sheet = getOrCreateSheet(ss, targetSheetName);
-    sheet.clearContents();
-    sheet.getRange(1, 1, out.length, out[0].length).setValues(out);
-    
-    if (out.length > 1) {
-      const numRows = out.length - 1;
-      sheet.getRange(2, 3, numRows, 1).setNumberFormat("@"); // Date as text
-      sheet.getRange(2, 5, numRows, 1).setNumberFormat("0.########"); // Percent
-      sheet.getRange(2, 6, numRows, 1).setNumberFormat("#,##0.00"); // Amount
-    }
-    
-    sheet.autoResizeColumns(1, out[0].length);
-    Logger.log(`Successfully imported ${targetSheetName}`);
-    
-  } catch (error) {
-    Logger.log(`Error in importBobBonusHistoryLatest: ${error.message}`);
-    SpreadsheetApp.getUi().alert(`Error importing Bonus History: ${error.message}`);
-    throw error;
-  }
-}
-
-/**
- * Imports compensation history from Bob API, keeping only the latest entry per employee
- */
-function importBobCompHistoryLatest() {
-  try {
-    const reportId = BOB_REPORT_IDS.COMP_HISTORY;
-    const targetSheetName = SHEET_NAMES.COMP_HISTORY;
-    
-    Logger.log(`Starting import of ${targetSheetName}...`);
-    
-    const rows = fetchBobReport(reportId);
-    const header = rows[0];
-    
-    const iEmpId   = findColumnIndex(header, ["Emp ID", "Employee ID", "Employee Id"]);
-    const iName    = findColumnIndex(header, ["Emp Name", "Display name", "Display Name", "Name"]);
-    const iEffDate = findColumnIndex(header, ["History effective date", "Effective date", "Effective Date"]);
-    const iBase    = findColumnIndex(header, ["History base salary", "Base salary", "Base Salary", "Base pay"]);
-    const iCurr    = findColumnIndex(header, ["History base salary currency", "Base salary currency", "Currency"]);
-    const iReason  = findColumnIndex(header, ["History reason", "Reason", "Change reason"]);
-  
-    // Keep latest row per Emp ID by Effective date
-    const latest = new Map();
-    for (let r = 1; r < rows.length; r++) {
-      const row = rows[r];
-      if (!row || row.length === 0) continue;
-      
-      let empId = safeCell(row, iEmpId);
-      const empIdNum = toNumber(empId);
-      empId = isFinite(empIdNum) ? String(empIdNum) : empId.trim();
-      
-      const effStr = safeCell(row, iEffDate);
-      const ymd = toYmd(effStr);
-      if (!empId || !ymd) continue;
-      
-      const existing = latest.get(empId);
-      if (!existing || ymd > existing.ymd) {
-        latest.set(empId, { row, ymd });
-      }
-    }
-  
-    const outHeader = ["Emp ID", "Emp Name", "Effective date", "Base salary", "Base salary currency", "History reason"];
-    const out = [outHeader];
-  
-    latest.forEach(({ row, ymd }) => {
-      let empId = safeCell(row, iEmpId);
-      const empIdNum = toNumber(empId);
-      empId = isFinite(empIdNum) ? String(empIdNum) : empId.trim();
-      
-      const name   = safeCell(row, iName);
-      const base   = toNumber(safeCell(row, iBase));
-      const curr   = safeCell(row, iCurr);
-      const reason = safeCell(row, iReason);
-      const effDate = parseDateSmart(ymd);
-      
-      out.push([empId, name, effDate, isFinite(base) ? base : "", curr, reason]);
-    });
-  
-    // Write to sheet
-    const ss = SpreadsheetApp.getActiveSpreadsheet();
-    const sheet = getOrCreateSheet(ss, targetSheetName);
-    sheet.clearContents();
-    sheet.getRange(1, 1, out.length, out[0].length).setValues(out);
-    
-    if (out.length > 1) {
-      const numRows = out.length - 1;
-      sheet.getRange(2, 3, numRows, 1).setNumberFormat("yyyy-mm-dd"); // Date
-      sheet.getRange(2, 4, numRows, 1).setNumberFormat("#,##0.00"); // Salary
-    }
-    
-    sheet.autoResizeColumns(1, out[0].length);
-    Logger.log(`Successfully imported ${targetSheetName}`);
-    
-  } catch (error) {
-    Logger.log(`Error in importBobCompHistoryLatest: ${error.message}`);
-    SpreadsheetApp.getUi().alert(`Error importing Comp History: ${error.message}`);
-    throw error;
-  }
-}
-
 
 // ============================================================================
 // SALARY RANGE CALCULATIONS
@@ -560,7 +282,6 @@ function getLookupMap_(ss) {
   return map;
 }
 
-// Legacy wrapper for findColumnIndex with regex
 function findHeaderIndex_(headers, regex) {
   const re = new RegExp(regex, 'i');
   for (let i = 0; i < headers.length; i++) {
@@ -569,11 +290,23 @@ function findHeaderIndex_(headers, regex) {
   return -1;
 }
 
-// Legacy wrapper - use columnToLetter() instead
-const _colToLetter_ = columnToLetter;
+// Convert 1-based column index to A1 letter(s)
+function _colToLetter_(col) {
+  let c = Number(col);
+  let out = '';
+  while (c > 0) {
+    const rem = (c - 1) % 26;
+    out = String.fromCharCode(65 + rem) + out;
+    c = Math.floor((c - 1) / 26);
+  }
+  return out;
+}
 
-// Legacy wrapper - use toNumber() instead
-const toNumber_ = toNumber;
+function toNumber_(v) {
+  if (v == null || v === '') return NaN;
+  const n = Number(String(v).replace(/[^\d.\-]/g, ''));
+  return isNaN(n) ? NaN : n;
+}
 
 function parseCiq_(ciq) {
   const s = String(ciq || '').trim();
@@ -640,9 +373,8 @@ function _findHeaderCached_(headers, sheetName, regex) {
   return idx;
 }
 
-// OPTIMIZED: Simplified cache key function
 function _aonValueCacheKey_(sheetName, fam, targetNum, prefLetter, ciqBaseLevel, headerRegex) {
-  return hashKey('AON', sheetName, fam, targetNum, prefLetter, ciqBaseLevel, headerRegex);
+  return `AON:${sheetName}|${fam}|${targetNum}|${prefLetter}|${ciqBaseLevel}|${headerRegex}`;
 }
 
 // Cache entire sheet data to reduce reads
@@ -873,7 +605,7 @@ function INTERNAL_STATS(region, familyOrCode, ciqLevel) {
   const ui = uiSheet_();
   const friendlyName = ui ? String(ui.getRange('C2').getDisplayValue() || '').trim().toUpperCase() : '';
 
-  const cacheKey = hashKey('INT', siteWanted, famCodeU, friendlyName, lvlU); // OPTIMIZED
+  const cacheKey = `INT:${siteWanted}|${famCodeU}|${friendlyName}|${lvlU}`;
   const cached = _cacheGet_(cacheKey);
   if (cached) return [cached];
 
@@ -1090,7 +822,7 @@ function _buildInternalIndex_() {
   const out = new Map();
   if (!sh) return out;
 
-  const values = _getSheetDataCached_(sh); // OPTIMIZED: Use cached data
+  const values = sh.getDataRange().getValues();
   const head = values[0].map(h => String(h || ''));
   const colFam  = head.indexOf('Job Family Name');
   const colMapN = head.indexOf('Mapped Family');
@@ -1142,14 +874,14 @@ function _readMappedEmployeesForAudit_() {
   const baseSh = ss.getSheetByName('Base Data');
   const out = [];
   if (!mapSh || !baseSh) return out;
-  const mVals = _getSheetDataCached_(mapSh); // OPTIMIZED: Use cached data
+  const mVals = mapSh.getDataRange().getValues();
   const mHead = mVals[0].map(h => String(h || '').replace(/\s+/g,' ').trim());
   const colEmp = mHead.findIndex(h => /^Emp\s*ID/i.test(h));
   let colMap = mHead.findIndex(h => /Is\s*Mapped\?/i.test(h));
   if (colMap < 0) colMap = mHead.findIndex(h => /^Mapping$/i.test(h));
   if (colEmp < 0 || colMap < 0) return out;
 
-  const bVals = _getSheetDataCached_(baseSh); // OPTIMIZED: Use cached data
+  const bVals = baseSh.getDataRange().getValues();
   const bHead = bVals[0].map(h => String(h || '').replace(/\s+/g,' ').trim());
   const cEmp  = bHead.findIndex(h => /^Emp\s*ID/i.test(h) || /Employee\s*ID/i.test(h));
   const cSite = bHead.indexOf('Site');
@@ -1567,29 +1299,18 @@ function buildCalculatorUI_() {
   const levels = ['L2 IC','L3 IC','L4 IC','L5 IC','L5.5 IC','L6 IC','L6.5 IC','L7 IC','L4 Mgr','L5 Mgr','L5.5 Mgr','L6 Mgr','L6.5 Mgr','L7 Mgr','L8 Mgr','L9 Mgr'];
   sh.getRange(8,1,levels.length,1).setValues(levels.map(s=>[s]));
 
-  // OPTIMIZED: Batch formula generation (85% faster)
-  const formulasMin = [], formulasMid = [], formulasMax = [];
-  const formulasIntMin = [], formulasIntMed = [], formulasIntMax = [], formulasIntCount = [];
-  
-  levels.forEach((level, i) => {
-    const aRow = 8 + i;
-    formulasMin.push([`=SALARY_RANGE_MIN($B$3,$B$4,$B$2,$A${aRow})`]);
-    formulasMid.push([`=SALARY_RANGE_MID($B$3,$B$4,$B$2,$A${aRow})`]);
-    formulasMax.push([`=SALARY_RANGE_MAX($B$3,$B$4,$B$2,$A${aRow})`]);
-    formulasIntMin.push([`=INDEX(INTERNAL_STATS($B$4,$B$2,$A${aRow}),1,1)`]);
-    formulasIntMed.push([`=INDEX(INTERNAL_STATS($B$4,$B$2,$A${aRow}),1,2)`]);
-    formulasIntMax.push([`=INDEX(INTERNAL_STATS($B$4,$B$2,$A${aRow}),1,3)`]);
-    formulasIntCount.push([`=INDEX(INTERNAL_STATS($B$4,$B$2,$A${aRow}),1,4)`]);
-  });
-  
-  // Batch set all formulas at once (single API call per column)
-  sh.getRange(8, 2, levels.length, 1).setFormulas(formulasMin);
-  sh.getRange(8, 3, levels.length, 1).setFormulas(formulasMid);
-  sh.getRange(8, 4, levels.length, 1).setFormulas(formulasMax);
-  sh.getRange(8, 6, levels.length, 1).setFormulas(formulasIntMin);
-  sh.getRange(8, 7, levels.length, 1).setFormulas(formulasIntMed);
-  sh.getRange(8, 8, levels.length, 1).setFormulas(formulasIntMax);
-  sh.getRange(8,12, levels.length, 1).setFormulas(formulasIntCount);
+  // Market range formulas
+  for (let r=0; r<levels.length; r++) {
+    const aRow = 8 + r;
+    sh.getRange(aRow, 2).setFormula(`=SALARY_RANGE_MIN($B$3,$B$4,$B$2,$A${aRow})`);
+    sh.getRange(aRow, 3).setFormula(`=SALARY_RANGE_MID($B$3,$B$4,$B$2,$A${aRow})`);
+    sh.getRange(aRow, 4).setFormula(`=SALARY_RANGE_MAX($B$3,$B$4,$B$2,$A${aRow})`);
+    // Internal stats (min/median/max/count)
+    sh.getRange(aRow, 6).setFormula(`=INDEX(INTERNAL_STATS($B$4,$B$2,$A${aRow}),1,1)`);
+    sh.getRange(aRow, 7).setFormula(`=INDEX(INTERNAL_STATS($B$4,$B$2,$A${aRow}),1,2)`);
+    sh.getRange(aRow, 8).setFormula(`=INDEX(INTERNAL_STATS($B$4,$B$2,$A${aRow}),1,3)`);
+    sh.getRange(aRow,12).setFormula(`=INDEX(INTERNAL_STATS($B$4,$B$2,$A${aRow}),1,4)`);
+  }
 
   applyCurrency_();
   SpreadsheetApp.getActive().toast('Calculator UI built. Choose Region, Category, and Job Family to calculate.', 'Done', 5);
@@ -1941,7 +1662,7 @@ function syncEmployeeLevelMappingFromBob_() {
   const ss = SpreadsheetApp.getActive();
   const base = ss.getSheetByName('Base Data');
   if (!base || base.getLastRow() <= 1) { SpreadsheetApp.getActive().toast('Base Data not found or empty','Info',4); return; }
-  const vals = _getSheetDataCached_(base); // OPTIMIZED: Use cached data
+  const vals = base.getDataRange().getValues();
   const head = vals[0].map(h => String(h||'').replace(/\s+/g,' ').trim());
   const cEmp   = head.findIndex(h => /^Emp\s*ID$/i.test(h) || /Employee\s*ID/i.test(h));
   const cAct   = head.findIndex(h => /^Active$/i.test(h) || /Active\s*\/\s*Inactive/i.test(h));
@@ -2006,7 +1727,7 @@ function syncTitleMappingFromBob_() {
   const ss = SpreadsheetApp.getActive();
   const base = ss.getSheetByName('Base Data');
   if (!base || base.getLastRow() <= 1) { SpreadsheetApp.getActive().toast('Base Data not found or empty','Info',4); return; }
-  const vals = _getSheetDataCached_(base); // OPTIMIZED: Use cached data
+  const vals = base.getDataRange().getValues();
   const head = vals[0].map(h => String(h||'').replace(/\s+/g,' ').trim());
   const cTitle = head.findIndex(h => /^(Job\s*title|Job\s*Title|Title|Job\s*name)$/i.test(h));
   const cAct   = head.findIndex(h => /^Active$/i.test(h) || /Active\s*\/\s*Inactive/i.test(h));
