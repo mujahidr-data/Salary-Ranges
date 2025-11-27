@@ -2949,16 +2949,16 @@ function buildCalculatorUIForY1_() {
   levels.forEach((level, i) => {
     const aRow = 8 + i;
     
-    // Market Range: Currency-aware XLOOKUP
-    formulasRangeStart.push([`=IF($B$4="Local", XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$R:$R,'Full List'!$G:$G,""), XLOOKUP($B$2&$A${aRow}&$B$3,'Full List USD'!$R:$R,'Full List USD'!$G:$G,""))`]);
-    formulasRangeMid.push([`=IF($B$4="Local", XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$R:$R,'Full List'!$J:$J,""), XLOOKUP($B$2&$A${aRow}&$B$3,'Full List USD'!$R:$R,'Full List USD'!$J:$J,""))`]);
-    formulasRangeEnd.push([`=IF($B$4="Local", XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$R:$R,'Full List'!$M:$M,""), XLOOKUP($B$2&$A${aRow}&$B$3,'Full List USD'!$R:$R,'Full List USD'!$M:$M,""))`]);
+    // Market Range: Currency-aware XLOOKUP (Column N=Range Start, O=Range Mid, P=Range End)
+    formulasRangeStart.push([`=IF($B$4="Local", XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$U:$U,'Full List'!$N:$N,""), XLOOKUP($B$2&$A${aRow}&$B$3,'Full List USD'!$U:$U,'Full List USD'!$N:$N,""))`]);
+    formulasRangeMid.push([`=IF($B$4="Local", XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$U:$U,'Full List'!$O:$O,""), XLOOKUP($B$2&$A${aRow}&$B$3,'Full List USD'!$U:$U,'Full List USD'!$O:$O,""))`]);
+    formulasRangeEnd.push([`=IF($B$4="Local", XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$U:$U,'Full List'!$P:$P,""), XLOOKUP($B$2&$A${aRow}&$B$3,'Full List USD'!$U:$U,'Full List USD'!$P:$P,""))`]);
     
-    // Internal stats
-    formulasIntMin.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$R:$R,'Full List'!$N:$N,"")`]);
-    formulasIntMed.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$R:$R,'Full List'!$O:$O,"")`]);
-    formulasIntMax.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$R:$R,'Full List'!$P:$P,"")`]);
-    formulasIntCount.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$R:$R,'Full List'!$Q:$Q,"")`]);
+    // Internal stats (Column Q=Internal Min, R=Median, S=Max, T=Emp Count)
+    formulasIntMin.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$U:$U,'Full List'!$Q:$Q,"")`]);
+    formulasIntMed.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$U:$U,'Full List'!$R:$R,"")`]);
+    formulasIntMax.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$U:$U,'Full List'!$S:$S,"")`]);
+    formulasIntCount.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$U:$U,'Full List'!$T:$T,"")`]);
     
     // CR columns
     formulasAvgCR.push([`=IFERROR(IF($B$4="USD", AVERAGEIFS('Employees (Mapped)'!$F:$F,'Employees (Mapped)'!$C:$C,$B$2,'Employees (Mapped)'!$D:$D,$A${aRow},'Employees (Mapped)'!$E:$E,$B$3,'Employees (Mapped)'!$D:$D,"<>")/C${aRow}, AVERAGEIFS('Employees (Mapped)'!$F:$F,'Employees (Mapped)'!$C:$C,$B$2,'Employees (Mapped)'!$D:$D,$A${aRow},'Employees (Mapped)'!$E:$E,$B$3,'Employees (Mapped)'!$D:$D,"<>")/C${aRow}),"")`]);
