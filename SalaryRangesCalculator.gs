@@ -14,16 +14,17 @@
  * - Persistent legacy mapping storage
  * - Interactive calculator UI
  * 
- * @version 4.7.3
+ * @version 4.7.4
  * @date 2025-11-27
- * @changelog v4.7.3 - CRITICAL FIX: Internal stats now currency-aware
+ * @changelog v4.7.4 - Enhanced: Update Legacy Mappings with change detection
+ *   - Fixed misleading "0 new mappings" message when updating existing mappings
+ *   - Now shows: "X updated, Y new" instead of just "Y new"
+ *   - Added change detection: Only updates if Aon Code or Level actually changed
+ *   - Added detailed logging: Shows old → new values for first 3 changes
+ *   - Clearer messages: "No changes (all approved mappings already in storage)"
+ *   - Issue: User changed approved mapping, got "0 new" but update did work
+ * @previous v4.7.3 - CRITICAL FIX: Internal stats now currency-aware
  *   - Internal Min/Med/Max/Emp Count now switch between Local and USD
- *   - Was: Always pulled from 'Full List' (local) regardless of Currency dropdown
- *   - Now: IF($B$4="Local", 'Full List', 'Full List USD')
- *   - Applies to both calculators (X0 and Y1)
- *   - Market Range was correct, but Internal stats were missing IF() wrapper
- * @previous v4.7.2 - Tool: Rebuild Calculator Formulas
- *   - Added "Rebuild Calculator Formulas" to Tools menu
  *   - Bug: Internal stats included inactive employees (exits after Jan 1, 2024)
  *   - Fix: Cross-reference with Base Data to check Active/Inactive status
  *   - Build active status index from Base Data ONCE (Map: empID → isActive)
@@ -3732,22 +3733,53 @@ function updateLegacyMappingsFromApproved_() {
   }
   
   // Prepare update/insert rows
-  const updates = []; // [rowNum, [empID, jobFamily, fullMapping]]
+  const updates = []; // [rowNum, [empID, jobFamily, fullMapping], oldMapping]
   const inserts = []; // [empID, jobFamily, fullMapping]
+  
+  // Get existing legacy data for comparison
+  const existingLegacyData = new Map(); // empID → {jobFamily, fullMapping}
+  if (legacySh.getLastRow() > 1) {
+    const legacyVals = legacySh.getRange(2,1,legacySh.getLastRow()-1,3).getValues();
+    legacyVals.forEach(row => {
+      const empID = String(row[0] || '').trim();
+      const jobFamily = String(row[1] || '').trim();
+      const fullMapping = String(row[2] || '').trim();
+      if (empID) {
+        existingLegacyData.set(empID, {jobFamily, fullMapping});
+      }
+    });
+  }
   
   approvedMappings.forEach((mapping, empID) => {
     if (existingMap.has(empID)) {
-      // Update existing row
-      const rowNum = existingMap.get(empID);
-      updates.push([rowNum, [empID, mapping.jobFamily, mapping.fullMapping]]);
+      // Check if actually changed
+      const oldMapping = existingLegacyData.get(empID);
+      const changed = !oldMapping || 
+                     oldMapping.jobFamily !== mapping.jobFamily || 
+                     oldMapping.fullMapping !== mapping.fullMapping;
+      
+      if (changed) {
+        const rowNum = existingMap.get(empID);
+        updates.push([rowNum, [empID, mapping.jobFamily, mapping.fullMapping], oldMapping]);
+        
+        // Log first 3 changes
+        if (updates.length <= 3) {
+          Logger.log(`🔄 Update EmpID ${empID}: ${oldMapping?.fullMapping || 'none'} → ${mapping.fullMapping}`);
+        }
+      }
     } else {
       // Insert new row
       inserts.push([empID, mapping.jobFamily, mapping.fullMapping]);
+      
+      // Log first 3 insertions
+      if (inserts.length <= 3) {
+        Logger.log(`➕ New EmpID ${empID}: ${mapping.fullMapping}`);
+      }
     }
   });
   
   // Apply updates
-  updates.forEach(([rowNum, data]) => {
+  updates.forEach(([rowNum, data, oldMapping]) => {
     legacySh.getRange(rowNum, 1, 1, 3).setValues([data]);
   });
   
@@ -3760,14 +3792,25 @@ function updateLegacyMappingsFromApproved_() {
   const allLegacyData = legacySh.getRange(2, 1, legacySh.getLastRow() - 1, 3).getValues();
   _saveLegacyMappingsToStorage_(allLegacyData);
   
-  const msg = `✅ Updated Legacy Mappings:\n\n` +
-    `📝 ${updates.length} updated\n` +
-    `➕ ${inserts.length} new\n` +
-    `💾 ${allLegacyData.length} total in storage\n\n` +
-    `Saved to persistent storage ✓`;
-  SpreadsheetApp.getActive().toast(msg, 'Legacy Mappings Synced', 8);
+  // More descriptive message
+  let msg = `✅ Legacy Mappings Synced!\n\n`;
   
-  Logger.log(`Successfully synced ${approvedMappings.size} approved mappings to persistent storage`);
+  if (updates.length > 0) {
+    msg += `📝 ${updates.length} mapping${updates.length === 1 ? '' : 's'} updated\n`;
+  }
+  if (inserts.length > 0) {
+    msg += `➕ ${inserts.length} new mapping${inserts.length === 1 ? '' : 's'} added\n`;
+  }
+  if (updates.length === 0 && inserts.length === 0) {
+    msg += `ℹ️ No changes (all approved mappings already in storage)\n`;
+  }
+  
+  msg += `💾 ${allLegacyData.length} total in persistent storage\n\n`;
+  msg += `✓ Changes saved and will persist across Fresh Build`;
+  
+  SpreadsheetApp.getActive().toast(msg, 'Legacy Mappings', 10);
+  
+  Logger.log(`Successfully synced ${approvedMappings.size} approved mappings: ${updates.length} updated, ${inserts.length} new`);
 }
 
 /**
