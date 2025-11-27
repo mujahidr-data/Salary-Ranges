@@ -4695,14 +4695,14 @@ function rebuildFullListAllCombinations_() {
         let rangeStart, rangeMid, rangeEnd;
         if (category === 'X0') {
           // X0: P25 → P62.5 → P90
-          rangeStart = _toNumber_(p25) || _toNumber_(p40) || _toNumber_(p50) || '';
-          rangeMid = _toNumber_(p625) || _toNumber_(p75) || _toNumber_(p90) || '';
-          rangeEnd = _toNumber_(p90) || '';
+          rangeStart = toNumber(p25) || toNumber(p40) || toNumber(p50) || '';
+          rangeMid = toNumber(p625) || toNumber(p75) || toNumber(p90) || '';
+          rangeEnd = toNumber(p90) || '';
         } else {
           // Y1: P10 → P40 → P62.5
-          rangeStart = _toNumber_(p10) || _toNumber_(p25) || _toNumber_(p40) || '';
-          rangeMid = _toNumber_(p40) || _toNumber_(p50) || _toNumber_(p625) || '';
-          rangeEnd = _toNumber_(p625) || _toNumber_(p75) || _toNumber_(p90) || '';
+          rangeStart = toNumber(p10) || toNumber(p25) || toNumber(p40) || '';
+          rangeMid = toNumber(p40) || toNumber(p50) || toNumber(p625) || '';
+          rangeEnd = toNumber(p625) || toNumber(p75) || toNumber(p90) || '';
         }
         
         // Calculate CR values for this combination
@@ -4715,13 +4715,13 @@ function rebuildFullListAllCombinations_() {
           execDesc,     // Job Family (Exec)
           category,     // Category
           ciqLevel,     // CIQ Level
-          _toNumber_(p10) || '',
-          _toNumber_(p25) || '',
-          _toNumber_(p40) || '',
-          _toNumber_(p50) || '',
-          _toNumber_(p625) || '',
-          _toNumber_(p75) || '',
-          _toNumber_(p90) || '',
+          toNumber(p10) || '',
+          toNumber(p25) || '',
+          toNumber(p40) || '',
+          toNumber(p50) || '',
+          toNumber(p625) || '',
+          toNumber(p75) || '',
+          toNumber(p90) || '',
           rangeStart,   // Range Start (P25 for X0, P10 for Y1)
           rangeMid,     // Range Mid (P62.5 for X0, P40 for Y1)
           rangeEnd,     // Range End (P90 for X0, P62.5 for Y1)
