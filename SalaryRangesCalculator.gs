@@ -2038,11 +2038,11 @@ function buildCalculatorUI_() {
     formulasIntCount.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$U:$U,'Full List'!$T:$T,"")`]);
     
     // Compa Ratio columns - XLOOKUP from Full List (pre-calculated)
-    // Column Z = Key, Column U = Avg CR, Column V = TT CR, Column W = New Hire CR, Column X = BT CR
-    formulasAvgCR.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Z:$Z,'Full List'!$U:$U,"")`]);
-    formulasTTCR.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Z:$Z,'Full List'!$V:$V,"")`]);
-    formulasNewHireCR.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Z:$Z,'Full List'!$W:$W,"")`]);
-    formulasBTCR.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Z:$Z,'Full List'!$X:$X,"")`]);
+    // Column Y = Key, Column U = Avg CR, Column V = TT CR, Column W = New Hire CR, Column X = BT CR
+    formulasAvgCR.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$U:$U,"")`]);
+    formulasTTCR.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$V:$V,"")`]);
+    formulasNewHireCR.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$W:$W,"")`]);
+    formulasBTCR.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$X:$X,"")`]);
   });
   
   // Batch set all formulas at once (single API call per column)
@@ -2100,7 +2100,7 @@ function _getFullListIndex_() {
   const values = sh.getDataRange().getValues();
   if (!values.length) { _cachePut_(cacheKey, index, CACHE_TTL); return index; }
   const head = values[0].map(h => String(h || '').trim());
-  const cExec = head.indexOf('Job Family (Exec Description)');
+  const cExec = head.findIndex(h => /Job Family.*Exec/i.test(h));
   const cCIQ  = head.indexOf('CIQ Level');
   const cRegion = head.indexOf('Region');
   const cP10  = head.indexOf('P10');
@@ -3008,10 +3008,10 @@ function buildCalculatorUIForY1_() {
     formulasIntCount.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$U:$U,'Full List'!$T:$T,"")`]);
     
     // CR columns - XLOOKUP from Full List (pre-calculated)
-    formulasAvgCR.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Z:$Z,'Full List'!$U:$U,"")`]);
-    formulasTTCR.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Z:$Z,'Full List'!$V:$V,"")`]);
-    formulasNewHireCR.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Z:$Z,'Full List'!$W:$W,"")`]);
-    formulasBTCR.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Z:$Z,'Full List'!$X:$X,"")`]);
+    formulasAvgCR.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$U:$U,"")`]);
+    formulasTTCR.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$V:$V,"")`]);
+    formulasNewHireCR.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$W:$W,"")`]);
+    formulasBTCR.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$X:$X,"")`]);
   });
   
   // Set formulas
@@ -3046,14 +3046,17 @@ function createFullListPlaceholders_() {
   }
   sh.setTabColor('#FF0000'); // Red color for automated sheets
   if (sh.getLastRow() === 0) {
-    sh.getRange(1,1,1,18).setValues([[ 
+    sh.getRange(1,1,1,25).setValues([[ 
       'Site', 'Region', 'Aon Code (base)', 'Job Family (Exec)', 'Category', 'CIQ Level',
       'P10', 'P25', 'P40', 'P50', 'P62.5', 'P75', 'P90',
-      'Internal Min', 'Internal Median', 'Internal Max', 'Emp Count', 'Key'
+      'Range Start', 'Range Mid', 'Range End',
+      'Internal Min', 'Internal Median', 'Internal Max', 'Emp Count',
+      'Avg CR', 'TT CR', 'New Hire CR', 'BT CR',
+      'Key'
     ]]);
     sh.setFrozenRows(1);
-    sh.getRange(1,1,1,18).setFontWeight('bold');
-    sh.autoResizeColumns(1,18);
+    sh.getRange(1,1,1,25).setFontWeight('bold');
+    sh.autoResizeColumns(1,25);
   }
   
   // Full List USD
@@ -3063,7 +3066,7 @@ function createFullListPlaceholders_() {
   }
   sh.setTabColor('#FF0000'); // Red color for automated sheets
   if (sh.getLastRow() === 0) {
-    sh.getRange(1,1,1,26).setValues([[ 
+    sh.getRange(1,1,1,25).setValues([[ 
       'Site', 'Region', 'Aon Code (base)', 'Job Family (Exec)', 'Category', 'CIQ Level',
       'P10', 'P25', 'P40', 'P50', 'P62.5', 'P75', 'P90',
       'Range Start', 'Range Mid', 'Range End',
@@ -3072,8 +3075,8 @@ function createFullListPlaceholders_() {
       'Key'
     ]]);
     sh.setFrozenRows(1);
-    sh.getRange(1,1,1,26).setFontWeight('bold');
-    sh.autoResizeColumns(1,26);
+    sh.getRange(1,1,1,25).setFontWeight('bold');
+    sh.autoResizeColumns(1,25);
   }
 }
 
@@ -3545,7 +3548,7 @@ function rebuildFullListAllCombinations_() {
   const fullListSh = ss.getSheetByName('Full List') || ss.insertSheet('Full List');
   fullListSh.setTabColor('#FF0000'); // Red color for automated sheets
   fullListSh.clearContents();
-  fullListSh.getRange(1,1,1,26).setValues([[ 
+  fullListSh.getRange(1,1,1,25).setValues([[ 
     'Site', 'Region', 'Aon Code (base)', 'Job Family (Exec)', 'Category', 'CIQ Level',
     'P10', 'P25', 'P40', 'P50', 'P62.5', 'P75', 'P90',
     'Range Start', 'Range Mid', 'Range End',
@@ -3554,13 +3557,13 @@ function rebuildFullListAllCombinations_() {
     'Key'
   ]]);
   fullListSh.setFrozenRows(1);
-  fullListSh.getRange(1,1,1,26).setFontWeight('bold');
+  fullListSh.getRange(1,1,1,25).setFontWeight('bold');
   
   if (rows.length) {
-    fullListSh.getRange(2,1,rows.length,26).setValues(rows);
+    fullListSh.getRange(2,1,rows.length,25).setValues(rows);
   }
   
-  fullListSh.autoResizeColumns(1,26);
+  fullListSh.autoResizeColumns(1,25);
   
   // Clear cache
   CacheService.getDocumentCache().removeAll(['MAP:FULL_LIST']);
