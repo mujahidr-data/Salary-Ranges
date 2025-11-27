@@ -2223,37 +2223,16 @@ function _getRangeFromFullList_(category, region, family, ciqLevel) {
   return { min: n(out.min), mid: n(out.mid), max: n(out.max) };
 }
 
+/**
+ * DEPRECATED: No longer creates deprecated sheets
+ * - Job family Descriptions → Use Lookup sheet instead
+ * - Employee Level Mapping → Use Employees Mapped instead
+ * - Aon Code Remap → Not needed (handled in code)
+ * - Title Mapping → Auto-populated during Import Bob Data
+ */
 function createMappingPlaceholderSheets_() {
-  const ss = SpreadsheetApp.getActive();
-  // Title Mapping
-  let sh = ss.getSheetByName('Title Mapping') || ss.insertSheet('Title Mapping');
-  sh.setTabColor('#FF0000'); // Red color for automated sheets
-  if (sh.getLastRow() === 0) {
-    sh.getRange(1,1,1,3).setValues([[ 'Job title (live)', 'Job title (Mapped)', 'Job family' ]]);
-    sh.setFrozenRows(1); sh.getRange(1,1,1,3).setFontWeight('bold'); sh.autoResizeColumns(1,3);
-  }
-  // Job family Descriptions
-  sh = ss.getSheetByName('Job family Descriptions') || ss.insertSheet('Job family Descriptions');
-  sh.setTabColor('#FF0000'); // Red color for automated sheets
-  if (sh.getLastRow() === 0) {
-    sh.getRange(1,1,1,2).setValues([[ 'Aon Code', 'Job Family (Exec Description)' ]]);
-    sh.setFrozenRows(1); sh.getRange(1,1,1,2).setFontWeight('bold'); sh.autoResizeColumns(1,2);
-  }
-  // Employee Level Mapping
-  sh = ss.getSheetByName('Employee Level Mapping') || ss.insertSheet('Employee Level Mapping');
-  sh.setTabColor('#FF0000'); // Red color for automated sheets
-  if (sh.getLastRow() === 0) {
-    sh.getRange(1,1,1,3).setValues([[ 'Emp ID', 'Mapping', 'Status' ]]);
-    sh.setFrozenRows(1); sh.getRange(1,1,1,3).setFontWeight('bold'); sh.autoResizeColumns(1,3);
-  }
-  // Aon Code Remap
-  sh = ss.getSheetByName('Aon Code Remap') || ss.insertSheet('Aon Code Remap');
-  sh.setTabColor('#FF0000'); // Red color for automated sheets
-  if (sh.getLastRow() === 0) {
-    sh.getRange(1,1,2,2).setValues([[ 'From Code', 'To Code' ], [ 'EN.SOML', 'EN.AIML' ]]);
-    sh.setFrozenRows(1); sh.getRange(1,1,1,2).setFontWeight('bold'); sh.autoResizeColumns(1,2);
-  }
-  SpreadsheetApp.getActiveSpreadsheet().toast('Ensured mapping placeholder tabs exist.', 'Done', 5);
+  // No longer creates any sheets - all handled by other functions
+  // This function kept for backward compatibility only
 }
 
 function listExecMappings_() {
@@ -3553,10 +3532,7 @@ function syncEmployeesMappedSheet_() {
     const empID = String(row[iEmpID] || '').trim();
     if (!empID) continue;
     
-    // Skip inactive employees
-    const isActive = iActive >= 0 ? String(row[iActive]||'').toLowerCase() === 'active' : true;
-    if (!isActive) continue;
-    
+    // Include ALL employees (active and inactive)
     const name = iName >= 0 ? String(row[iName] || '') : '';
     const title = iTitle >= 0 ? String(row[iTitle] || '') : '';
     const dept = iDept >= 0 ? String(row[iDept] || '') : '';
@@ -3800,46 +3776,145 @@ function _calculateCRStats_(jobFamily, ciqLevel, region, midPoint) {
 /**
  * Syncs Title Mapping sheet with Base Data
  */
+/**
+ * Syncs Title Mapping sheet with auto-population from Employees Mapped
+ * For each unique job title, determines the most common Aon Code and Level
+ */
 function syncTitleMapping_() {
   const ss = SpreadsheetApp.getActive();
-  const baseSh = ss.getSheetByName('Base Data');
+  const baseSh = ss.getSheetByName(SHEET_NAMES.BASE_DATA);
+  const empSh = ss.getSheetByName(SHEET_NAMES.EMPLOYEES_MAPPED);
+  
   if (!baseSh || baseSh.getLastRow() <= 1) return;
   
   const titleSh = ss.getSheetByName('Title Mapping') || ss.insertSheet('Title Mapping');
+  titleSh.setTabColor('#FF0000'); // Red color for automated sheets
   
-  // Get existing
-  const existing = new Set();
-  if (titleSh.getLastRow() > 1) {
-    const vals = titleSh.getRange(2,1,titleSh.getLastRow()-1,1).getValues();
-    vals.forEach(row => {
-      if (row[0]) existing.add(String(row[0]).trim());
-    });
-  }
-  
-  // Get titles from Base Data
+  // Get Base Data
   const baseVals = baseSh.getDataRange().getValues();
   const baseHead = baseVals[0].map(h => String(h||''));
+  const iEmpID = baseHead.findIndex(h => /Employee.*ID/i.test(h));
   const iTitle = baseHead.findIndex(h => /Job.*Title/i.test(h));
-  if (iTitle < 0) return;
+  if (iTitle < 0 || iEmpID < 0) return;
   
-  const newTitles = new Set();
+  // Build EmpID → Title map
+  const empIDToTitle = new Map();
   for (let r = 1; r < baseVals.length; r++) {
+    const empID = String(baseVals[r][iEmpID] || '').trim();
     const title = String(baseVals[r][iTitle] || '').trim();
-    if (title && !existing.has(title)) {
-      newTitles.add(title);
+    if (empID && title) {
+      empIDToTitle.set(empID, title);
     }
   }
   
-  if (newTitles.size === 0) {
-    SpreadsheetApp.getActive().toast('No new titles to add', 'Title Mapping', 3);
-    return;
+  // Get Employees Mapped data (if exists)
+  const titleToMappings = new Map(); // title → [{aonCode, level}, ...]
+  if (empSh && empSh.getLastRow() > 1) {
+    const empVals = empSh.getRange(2,1,empSh.getLastRow()-1,12).getValues();
+    empVals.forEach(row => {
+      const empID = String(row[0] || '').trim();
+      const aonCode = String(row[5] || '').trim();
+      const level = String(row[6] || '').trim();
+      const status = String(row[9] || '').trim();
+      
+      // Only use approved or legacy mappings
+      if ((status === 'Approved' || status === 'Needs Review') && aonCode && level) {
+        const title = empIDToTitle.get(empID);
+        if (title) {
+          if (!titleToMappings.has(title)) {
+            titleToMappings.set(title, []);
+          }
+          titleToMappings.get(title).push({aonCode, level});
+        }
+      }
+    });
   }
   
-  const rows = Array.from(newTitles).map(title => [title, '', '']);
-  titleSh.getRange(titleSh.getLastRow()+1, 1, rows.length, 3).setValues(rows);
+  // Calculate most common mapping for each title
+  const titleMappings = new Map();
+  titleToMappings.forEach((mappings, title) => {
+    // Count frequency of each aonCode+level combination
+    const freqMap = new Map();
+    mappings.forEach(({aonCode, level}) => {
+      const key = `${aonCode}|${level}`;
+      freqMap.set(key, (freqMap.get(key) || 0) + 1);
+    });
+    
+    // Find most common
+    let maxCount = 0, bestMapping = null;
+    freqMap.forEach((count, key) => {
+      if (count > maxCount) {
+        maxCount = count;
+        const [aonCode, level] = key.split('|');
+        bestMapping = {aonCode, level, count};
+      }
+    });
+    
+    if (bestMapping) {
+      titleMappings.set(title, bestMapping);
+    }
+  });
   
-  SpreadsheetApp.getActive().toast(`Added ${rows.length} new job titles`, 'Title Mapping', 5);
-  enhanceMappingSheets_();
+  // Get existing titles in Title Mapping
+  const existingTitles = new Map();
+  if (titleSh.getLastRow() > 1) {
+    const vals = titleSh.getRange(2,1,titleSh.getLastRow()-1,3).getValues();
+    vals.forEach(row => {
+      const title = String(row[0] || '').trim();
+      if (title) {
+        existingTitles.set(title, {aonCode: row[1], level: row[2]});
+      }
+    });
+  }
+  
+  // Collect all unique titles from Base Data
+  const allTitles = new Set(empIDToTitle.values());
+  
+  // Build rows for Title Mapping
+  const rows = [];
+  allTitles.forEach(title => {
+    const existing = existingTitles.get(title);
+    const suggested = titleMappings.get(title);
+    
+    let aonCode = '', level = '';
+    
+    // Keep existing if manually entered
+    if (existing && existing.aonCode && existing.level) {
+      aonCode = existing.aonCode;
+      level = existing.level;
+    }
+    // Use suggested from Employees Mapped
+    else if (suggested) {
+      aonCode = suggested.aonCode;
+      level = suggested.level;
+    }
+    
+    rows.push([title, aonCode, level]);
+  });
+  
+  // Sort by title
+  rows.sort((a, b) => a[0].localeCompare(b[0]));
+  
+  // Clear and rewrite
+  titleSh.clearContents();
+  titleSh.getRange(1,1,1,3).setValues([['Job Title', 'Aon Code', 'Level']]);
+  titleSh.setFrozenRows(1);
+  titleSh.getRange(1,1,1,3).setFontWeight('bold').setBackground('#1565C0').setFontColor('#FFFFFF');
+  
+  if (rows.length > 0) {
+    titleSh.getRange(2,1,rows.length,3).setValues(rows);
+  }
+  
+  titleSh.autoResizeColumns(1,3);
+  
+  const mappedCount = rows.filter(r => r[1] && r[2]).length;
+  const unmappedCount = rows.length - mappedCount;
+  
+  SpreadsheetApp.getActive().toast(
+    `Title Mapping: ${rows.length} titles (${mappedCount} mapped, ${unmappedCount} need review)`,
+    'Title Mapping',
+    5
+  );
 }
 
 /**
@@ -4037,18 +4112,20 @@ function freshBuild() {
       '✅ Fresh Build Complete!',
       'All sheets created successfully!\n\n' +
       '📋 SHEETS CREATED:\n' +
-      '✓ Lookup (with 71 Aon code mappings)\n' +
-      '✓ Aon region tabs (India, US, UK)\n' +
-      '✓ Mapping sheets (5 sheets)\n' +
-      '✓ Both calculator UIs (X0 & Y1)\n' +
+      '✓ Aon region tabs (India, US, UK) - paste your market data here\n' +
+      '✓ Lookup sheet (71 Aon codes + FX rates + level mapping)\n' +
+      '✓ Legacy Mappings (400+ employees auto-loaded)\n' +
+      '✓ Engineering and Product calculator (X0)\n' +
+      '✓ Everyone Else calculator (Y1)\n' +
       '✓ Full List placeholders\n\n' +
       '📋 NEXT STEPS:\n\n' +
-      '1️⃣ Paste Aon market data into region tabs\n' +
+      '1️⃣ Paste Aon market data into US/India/UK tabs\n' +
       '2️⃣ Configure HiBob API (BOB_ID and BOB_KEY)\n' +
       '3️⃣ Run: 📥 Import Bob Data\n' +
-      '4️⃣ Update "Employees Mapped" if needed (legacy)\n' +
+      '4️⃣ Review: ✅ Review Employee Mappings\n' +
       '5️⃣ Run: 📊 Build Market Data\n\n' +
-      'Ready to proceed?',
+      '✨ Deprecated: Job family Descriptions, Employee Level Mapping, Aon Code Remap\n\n' +
+      'Ready!',
       ui.ButtonSet.OK
     );
     
