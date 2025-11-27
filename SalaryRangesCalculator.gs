@@ -3441,14 +3441,22 @@ function updateLegacyMappingsFromApproved_() {
   }
   
   // Get all approved mappings from Employees Mapped
-  const empVals = empSh.getRange(2,1,empSh.getLastRow()-1,12).getValues();
+  const empVals = empSh.getRange(2,1,empSh.getLastRow()-1,15).getValues();
   const approvedMappings = new Map(); // empID → {jobFamily, fullMapping}
+  
+  let approvedCount = 0;
+  let skippedCount = 0;
   
   empVals.forEach(row => {
     const empID = String(row[0] || '').trim();
-    const aonCode = String(row[5] || '').trim();
-    const ciqLevel = String(row[6] || '').trim();
-    const status = String(row[9] || '').trim();
+    const aonCode = String(row[5] || '').trim(); // Column F (index 5)
+    const ciqLevel = String(row[7] || '').trim(); // Column H (index 7)
+    const status = String(row[10] || '').trim(); // Column K (index 10)
+    
+    // Debug logging for first few rows
+    if (approvedCount + skippedCount < 3) {
+      Logger.log(`Row ${approvedCount + skippedCount + 1}: EmpID=${empID}, Status="${status}", AonCode=${aonCode}, Level=${ciqLevel}`);
+    }
     
     // Only sync approved mappings
     if (status === 'Approved' && empID && aonCode && ciqLevel) {
@@ -3458,12 +3466,24 @@ function updateLegacyMappingsFromApproved_() {
       
       if (fullMapping) {
         approvedMappings.set(empID, {jobFamily, fullMapping});
+        approvedCount++;
+      } else {
+        Logger.log(`⚠️ Could not convert level "${ciqLevel}" to token for ${empID}`);
+        skippedCount++;
       }
+    } else if (empID) {
+      skippedCount++;
     }
   });
   
+  Logger.log(`Found ${approvedCount} approved mappings, skipped ${skippedCount} rows`);
+  
   if (approvedMappings.size === 0) {
-    SpreadsheetApp.getActive().toast('No approved mappings to sync', 'Legacy Mappings', 3);
+    const msg = `No approved mappings found.\n\n` +
+      `📋 Checked ${empVals.length} employees\n` +
+      `✓ To approve: Set Status = "Approved" in column K\n` +
+      `✓ Ensure Aon Code (F) and Level (H) are filled`;
+    SpreadsheetApp.getActive().toast(msg, 'Legacy Mappings', 8);
     return;
   }
   
@@ -3508,8 +3528,14 @@ function updateLegacyMappingsFromApproved_() {
   const allLegacyData = legacySh.getRange(2, 1, legacySh.getLastRow() - 1, 3).getValues();
   _saveLegacyMappingsToStorage_(allLegacyData);
   
-  const msg = `Updated Legacy Mappings: ${updates.length} updated, ${inserts.length} new\nSaved to persistent storage ✓`;
-  SpreadsheetApp.getActive().toast(msg, 'Legacy Mappings Synced', 5);
+  const msg = `✅ Updated Legacy Mappings:\n\n` +
+    `📝 ${updates.length} updated\n` +
+    `➕ ${inserts.length} new\n` +
+    `💾 ${allLegacyData.length} total in storage\n\n` +
+    `Saved to persistent storage ✓`;
+  SpreadsheetApp.getActive().toast(msg, 'Legacy Mappings Synced', 8);
+  
+  Logger.log(`Successfully synced ${approvedMappings.size} approved mappings to persistent storage`);
 }
 
 /**
