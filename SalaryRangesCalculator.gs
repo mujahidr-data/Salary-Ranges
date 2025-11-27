@@ -2244,93 +2244,43 @@ function createMappingPlaceholderSheets_() {
   // This function kept for backward compatibility only
 }
 
+/********************************
+ * DEPRECATED FUNCTIONS (kept for backward compatibility only)
+ * These functions managed the old "Job family Descriptions" sheet
+ * Now use Lookup sheet instead (auto-created with 71 codes)
+ ********************************/
+
 function listExecMappings_() {
-  const ss = SpreadsheetApp.getActive();
-  const sh = ss.getSheetByName('Job family Descriptions');
-  const out = [];
-  if (!sh) return out;
-  const vals = sh.getDataRange().getValues();
-  if (vals.length <= 1) return out;
-  const head = vals[0].map(h => String(h||''));
-  const iCode = head.findIndex(h => /^(Aon\s*Code|Job\s*Code)$/i.test(h));
-  const iDesc = head.findIndex(h => /Job\s*Family\s*\(Exec\s*Description\)/i.test(h));
-  for (let r=1; r<vals.length; r++) {
-    const code = iCode>=0 ? String(vals[r][iCode]||'').trim() : '';
-    const desc = iDesc>=0 ? String(vals[r][iDesc]||'').trim() : '';
-    if (code) out.push({ code, desc });
-  }
-  return out;
+  // DEPRECATED: Use Lookup sheet instead
+  return [];
 }
 
 function upsertExecMapping_(code, desc) {
-  code = String(code || '').trim(); desc = String(desc || '').trim(); if (!code || !desc) return;
-  const ss = SpreadsheetApp.getActive();
-  const sh = ss.getSheetByName('Job family Descriptions') || ss.insertSheet('Job family Descriptions');
-  const vals = sh.getDataRange().getValues();
-  if (!vals.length) sh.getRange(1,1,1,2).setValues([[ 'Aon Code', 'Job Family (Exec Description)' ]]);
-  const last = sh.getLastRow();
-  let found = false;
-  if (last > 1) {
-    const data = sh.getRange(2,1,last-1,2).getValues();
-    for (let i=0;i<data.length;i++) {
-      if (String(data[i][0]||'').trim() === code) { sh.getRange(2+i,2).setValue(desc); found = true; break; }
-    }
-  }
-  if (!found) sh.appendRow([code, desc]);
-  CacheService.getDocumentCache().remove('MAP:EXEC_DESC');
+  // DEPRECATED: Lookup sheet is auto-managed
+  SpreadsheetApp.getActive().toast('Use Lookup sheet instead (auto-managed)', 'Deprecated', 3);
 }
 
 function deleteExecMapping_(code) {
-  code = String(code || '').trim(); if (!code) return;
-  const ss = SpreadsheetApp.getActive();
-  const sh = ss.getSheetByName('Job family Descriptions'); if (!sh) return;
-  const last = sh.getLastRow(); if (last <= 1) return;
-  const data = sh.getRange(2,1,last-1,2).getValues();
-  for (let i=0;i<data.length;i++) {
-    if (String(data[i][0]||'').trim() === code) { sh.deleteRow(2+i); break; }
-  }
-  CacheService.getDocumentCache().remove('MAP:EXEC_DESC');
+  // DEPRECATED: Lookup sheet is auto-managed
+  SpreadsheetApp.getActive().toast('Use Lookup sheet instead (auto-managed)', 'Deprecated', 3);
 }
 
 function openExecMappingManager_() {
-  const html = HtmlService.createHtmlOutputFromFile('ExecMappingManager')
-    .setTitle('Exec Mapping Manager');
-  SpreadsheetApp.getUi().showSidebar(html);
+  // DEPRECATED: HTML UI no longer needed
+  SpreadsheetApp.getUi().alert(
+    '⚠️ Deprecated Feature',
+    'This feature is deprecated.\n\n' +
+    'Aon Code mappings are now managed in the Lookup sheet,\n' +
+    'which is auto-created with all 71 job family codes.\n\n' +
+    'No manual management needed!',
+    SpreadsheetApp.getUi().ButtonSet.OK
+  );
 }
 
 function seedExecMappingsFromAon_() {
-  const ss = SpreadsheetApp.getActive();
-  const regionSheets = [
-    ss.getSheetByName('US') || ss.getSheetByName('Aon US - 2025'),
-    ss.getSheetByName('UK') || ss.getSheetByName('Aon UK - 2025'),
-    ss.getSheetByName('India') || ss.getSheetByName('Aon India - 2025')
-  ].filter(Boolean);
-  if (!regionSheets.length) { SpreadsheetApp.getActive().toast('No region sheets found','Info',3); return; }
-
-  const existing = _getExecDescMap_();
-  const toInsert = new Map();
-  regionSheets.forEach(sh => {
-    const values = sh.getDataRange().getValues(); if (!values.length) return;
-    const headers = values[0].map(h => String(h || '').replace(/\s+/g,' ').trim());
-    const colJobCode = headers.indexOf('Job Code');
-    const colJobFam  = headers.indexOf('Job Family');
-    if (colJobCode < 0 || colJobFam < 0) return;
-    for (let r=1; r<values.length; r++) {
-      const row = values[r];
-      const jc = String(row[colJobCode] || '').trim(); if (!jc) continue;
-      const i = jc.lastIndexOf('.'); const base = i>=0 ? jc.slice(0,i) : jc;
-      const fam = String(row[colJobFam] || '').trim(); if (!base || !fam) continue;
-      if (!existing.has(base) && !toInsert.has(base)) toInsert.set(base, fam);
-    }
-  });
-  if (!toInsert.size) { SpreadsheetApp.getActive().toast('No new mappings to add','Info',3); return; }
-
-  const mapSh = ss.getSheetByName('Job family Descriptions') || ss.insertSheet('Job family Descriptions');
-  if (mapSh.getLastRow() === 0) mapSh.getRange(1,1,1,2).setValues([[ 'Aon Code', 'Job Family (Exec Description)' ]]);
-  const rows = Array.from(toInsert.entries()).map(([code, desc]) => [code, desc]);
-  mapSh.getRange(mapSh.getLastRow()+1, 1, rows.length, 2).setValues(rows);
-  CacheService.getDocumentCache().remove('MAP:EXEC_DESC');
-  SpreadsheetApp.getActive().toast(`Added ${rows.length} mappings`, 'Done', 5);
+  // DEPRECATED: Aon sheets now include Job Family column
+  // All mappings pre-loaded in Lookup sheet
+  SpreadsheetApp.getActive().toast('Not needed - Lookup sheet has all 71 codes', 'Deprecated', 3);
 }
 
 function enhanceMappingSheets_() {
@@ -2380,46 +2330,9 @@ function enhanceMappingSheets_() {
 }
 
 function fillRegionFamilies_() {
-  const ss = SpreadsheetApp.getActive();
-  const execMap = _getExecDescMap_();
-  const toAdd = new Set();
-  const regionSheets = [
-    ss.getSheetByName('US') || ss.getSheetByName('Aon US - 2025'),
-    ss.getSheetByName('UK') || ss.getSheetByName('Aon UK - 2025'),
-    ss.getSheetByName('India') || ss.getSheetByName('Aon India - 2025')
-  ].filter(Boolean);
-  let totalMissing = 0, totalFilled = 0;
-  regionSheets.forEach(sh => {
-    const values = sh.getDataRange().getValues(); if (!values.length) return;
-    const headers = values[0].map(h => String(h || '').replace(/\s+/g,' ').trim());
-    let colJobCode = headers.indexOf('Job Code');
-    let colJobFam  = headers.indexOf('Job Family');
-    // ensure Job Family column exists
-    if (colJobFam < 0) { colJobFam = headers.length; sh.insertColumnAfter(colJobCode+1); sh.getRange(1,colJobCode+2).setValue('Job Family'); colJobFam = colJobCode+1; }
-    const famRange = sh.getRange(2, colJobFam+1, sh.getMaxRows()-1, 1);
-    const rules = sh.getConditionalFormatRules();
-    const firstFamCell = sh.getRange(2, colJobFam+1, 1, 1).getA1Notation().split(':')[0];
-    rules.push(SpreadsheetApp.newConditionalFormatRule().whenFormulaSatisfied(`=LEN(${firstFamCell})=0`).setBackground('#FDE7E9').setFontColor('#D32F2F').setRanges([famRange]).build());
-    sh.setConditionalFormatRules(rules);
-    for (let r=1; r<values.length; r++) {
-      const jc = String(values[r][colJobCode] || '').trim(); if (!jc) continue;
-      const i = jc.lastIndexOf('.'); const base = i>=0 ? jc.slice(0,i) : jc;
-      const baseOut = remapAonCode_(base);
-      const desc = execMap.get(baseOut) || execMap.get(base) || '';
-      if (desc) { sh.getRange(r+1, colJobFam+1).setValue(desc); totalFilled++; }
-      else { totalMissing++; toAdd.add(base); }
-    }
-  });
-  if (toAdd.size) {
-    const mapSh = ss.getSheetByName('Job family Descriptions') || ss.insertSheet('Job family Descriptions');
-    if (mapSh.getLastRow() === 0) mapSh.getRange(1,1,1,2).setValues([[ 'Aon Code', 'Job Family (Exec Description)' ]]);
-    // append only codes not already present
-    const existing = new Set(listExecMappings_().map(r => r.code));
-    const rows = Array.from(toAdd).filter(c => !existing.has(c)).map(c => [c, '']);
-    if (rows.length) mapSh.getRange(mapSh.getLastRow()+1, 1, rows.length, 2).setValues(rows);
-  }
-  CacheService.getDocumentCache().remove('MAP:EXEC_DESC');
-  SpreadsheetApp.getActive().toast(`Filled: ${totalFilled}, Missing: ${totalMissing}. Open Manage Exec Mappings to complete missing.`, 'Sync complete', 5);
+  // DEPRECATED: Aon data now includes Job Family column
+  // No need to populate from Job Code since source data has it
+  SpreadsheetApp.getActive().toast('Not needed - Aon data includes Job Family column', 'Deprecated', 3);
 }
 
 function syncEmployeeLevelMappingFromBob_() {
@@ -2539,10 +2452,8 @@ function syncAllBobMappings_() {
  * Combines seedExecMappingsFromAon_ + fillRegionFamilies_
  */
 function seedAllJobFamilyMappings_() {
-  SpreadsheetApp.getActive().toast('Seeding all job family mappings...', 'In Progress', 3);
-  seedExecMappingsFromAon_();
-  fillRegionFamilies_();
-  SpreadsheetApp.getActive().toast('All job family mappings seeded!', 'Complete', 5);
+  // DEPRECATED: Use Fresh Build → Import Bob Data workflow instead
+  SpreadsheetApp.getActive().toast('Deprecated - Use Fresh Build instead', 'Deprecated', 3);
 }
 
 /**
@@ -2558,66 +2469,17 @@ function seedAllJobFamilyMappings_() {
  * 6. Enhance mapping sheets with formatting
  */
 function quickSetup_() {
+  // DEPRECATED: Use the new 3-step workflow instead
   const ui = SpreadsheetApp.getUi();
-  const response = ui.alert(
-    '⚡ Quick Setup',
-    'This will initialize the entire system:\n\n' +
-    '✓ Create all necessary tabs\n' +
-    '✓ Seed job family mappings from Aon data\n' +
-    '✓ Build calculator UI\n' +
-    '✓ Generate documentation\n\n' +
-    'Prerequisites:\n' +
-    '• Aon region tabs exist (US, UK, India)\n' +
-    '• Aon data is pasted with Job Code, Job Family, and percentile columns\n\n' +
-    'Continue?',
-    ui.ButtonSet.YES_NO
+  ui.alert(
+    '⚠️ Deprecated Feature',
+    'Quick Setup has been replaced with a streamlined 3-step workflow:\n\n' +
+    '1️⃣ Fresh Build - Creates all sheets and structure\n' +
+    '2️⃣ Import Bob Data - Loads employee data with smart mapping\n' +
+    '3️⃣ Build Market Data - Generates Full Lists and calculators\n\n' +
+    'Use Menu → Fresh Build to start!',
+    ui.ButtonSet.OK
   );
-  
-  if (response !== ui.Button.YES) {
-    SpreadsheetApp.getActive().toast('Setup cancelled', 'Cancelled', 3);
-    return;
-  }
-  
-  try {
-    SpreadsheetApp.getActive().toast('⏳ Step 1/6: Creating tabs...', 'Quick Setup', 3);
-    createAonPlaceholderSheets_();
-    createMappingPlaceholderSheets_();
-    Utilities.sleep(500);
-    
-    SpreadsheetApp.getActive().toast('⏳ Step 2/6: Seeding exec mappings...', 'Quick Setup', 3);
-    seedExecMappingsFromAon_();
-    Utilities.sleep(500);
-    
-    SpreadsheetApp.getActive().toast('⏳ Step 3/6: Filling job families...', 'Quick Setup', 3);
-    fillRegionFamilies_();
-    Utilities.sleep(500);
-    
-    SpreadsheetApp.getActive().toast('⏳ Step 4/6: Building calculator UI...', 'Quick Setup', 3);
-    buildCalculatorUI_();
-    Utilities.sleep(500);
-    
-    SpreadsheetApp.getActive().toast('⏳ Step 5/6: Generating help...', 'Quick Setup', 3);
-    buildHelpSheet_();
-    Utilities.sleep(500);
-    
-    SpreadsheetApp.getActive().toast('⏳ Step 6/6: Enhancing mappings...', 'Quick Setup', 3);
-    enhanceMappingSheets_();
-    
-    ui.alert(
-      '✅ Quick Setup Complete!',
-      'System initialized successfully!\n\n' +
-      'Next steps:\n' +
-      '1. Configure HiBob API credentials (Script Properties)\n' +
-      '2. Run "Import All Bob Data" to load employee data\n' +
-      '3. Run "Rebuild Full List Tabs" to generate ranges\n' +
-      '4. Start using the calculator!\n\n' +
-      'See Help sheet for detailed instructions.',
-      ui.ButtonSet.OK
-    );
-    
-  } catch (error) {
-    ui.alert('❌ Setup Error', 'Error during setup: ' + error.message, ui.ButtonSet.OK);
-  }
 }
 
 /**
