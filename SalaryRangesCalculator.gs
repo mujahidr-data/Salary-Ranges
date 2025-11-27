@@ -14,9 +14,16 @@
  * - Persistent legacy mapping storage
  * - Interactive calculator UI
  * 
- * @version 4.6.4
+ * @version 4.6.5-debug
  * @date 2025-11-27
- * @changelog v4.6.4 - CRITICAL HOTFIX: Fixed calculator formulas (wrong lookup column)
+ * @changelog v4.6.5-debug - Added logging for calculator dropdown creation issue
+ *   - Issue: Job Family dropdown not appearing in calculator sheets
+ *   - Added logging to _getExecDescMap_() to show Lookup sheet reading
+ *   - Added logging to buildCalculatorUI_() to show X0 families found
+ *   - Added logging to buildCalculatorUIForY1_() to show Y1 families found
+ *   - Fixed section detection: removed 'Aon Code' from stop condition (was preventing data read)
+ *   - Shows warnings if no families found (Lookup sheet empty/missing)
+ * @previous v4.6.4 - CRITICAL HOTFIX: Fixed calculator formulas (wrong lookup column)
  *   - Bug: Calculator formulas looking up in column U (Avg CR) instead of column Y (Key)
  *   - Result: Range Start/Mid/End were blank, Internal Min/Med/Max/Count were blank
  *   - Fix: Changed all XLOOKUP formulas to use 'Full List'!$Y:$Y for lookup array
@@ -1182,6 +1189,9 @@ function _getExecDescMap_() {
   if (lookupSh) {
     const vals = lookupSh.getDataRange().getValues();
     let inAonCodeSection = false;
+    let aonCodesRead = 0;
+    
+    Logger.log(`_getExecDescMap_: Reading Lookup sheet, ${vals.length} total rows`);
     
     for (let r = 0; r < vals.length; r++) {
       const row = vals[r];
@@ -1194,13 +1204,15 @@ function _getExecDescMap_() {
       // Detect Aon Code section header
       if (col1 === 'Aon Code' && /Job.*Family.*Exec/i.test(col2)) {
         inAonCodeSection = true;
+        Logger.log(`  Found Aon Code section header at row ${r+1}`);
         continue;
       }
       
       // Stop at next section (new header row)
-      if (inAonCodeSection && (col1 === 'CIQ Level' || col1 === 'Region' || col1 === 'Aon Code')) {
+      if (inAonCodeSection && (col1 === 'CIQ Level' || col1 === 'Region')) {
         inAonCodeSection = false;
-        continue;
+        Logger.log(`  Reached end of Aon Code section at row ${r+1}`);
+        break;
       }
       
       // Only read Aon Code section data
@@ -1208,9 +1220,17 @@ function _getExecDescMap_() {
         // Validate it's an Aon code format (XX.YYYY, not L5.5 IC)
         if (/^[A-Z]{2}\.[A-Z0-9]{4}$/i.test(col1)) {
           map.set(col1, col2);
+          aonCodesRead++;
+          if (aonCodesRead <= 3) {
+            Logger.log(`  Read: ${col1} → ${col2}`);
+          }
         }
       }
     }
+    
+    Logger.log(`_getExecDescMap_: Read ${aonCodesRead} Aon codes from Lookup sheet`);
+  } else {
+    Logger.log('_getExecDescMap_: Lookup sheet not found!');
   }
   
   // Fall back to Job family Descriptions sheet if Lookup doesn't have mappings
@@ -1252,6 +1272,9 @@ function _getCategoryMap_() {
   if (lookupSh) {
     const vals = lookupSh.getDataRange().getValues();
     let inAonCodeSection = false;
+    let categoriesRead = 0;
+    
+    Logger.log(`_getCategoryMap_: Reading Lookup sheet, ${vals.length} total rows`);
     
     for (let r = 0; r < vals.length; r++) {
       const row = vals[r];
@@ -1262,13 +1285,15 @@ function _getCategoryMap_() {
       const col3 = String(row[2] || '').trim().toUpperCase();
       
       // Detect Aon Code section header
-      if (col1 === 'Aon Code' && /Job.*Family.*Exec/i.test(col2) && col3 === 'Category') {
+      if (col1 === 'Aon Code' && /Job.*Family.*Exec/i.test(col2) && col3 === 'CATEGORY') {
         inAonCodeSection = true;
+        Logger.log(`  Found Aon Code section header at row ${r+1}`);
         continue;
       }
       
       // Stop at next section (new header row with different pattern)
       if (inAonCodeSection && (col1 === 'CIQ Level' || col1 === 'Region')) {
+        Logger.log(`  Reached end of Aon Code section at row ${r+1}`);
         break; // No more Aon Code section after this
       }
       
@@ -1277,9 +1302,17 @@ function _getCategoryMap_() {
         // Validate it's an Aon code format (XX.YYYY, not L5.5 IC)
         if (/^[A-Z]{2}\.[A-Z0-9]{4}$/i.test(col1)) {
           map.set(col1, col3);
+          categoriesRead++;
+          if (categoriesRead <= 3) {
+            Logger.log(`  Read: ${col1} → ${col3}`);
+          }
         }
       }
     }
+    
+    Logger.log(`_getCategoryMap_: Read ${categoriesRead} categories from Lookup sheet`);
+  } else {
+    Logger.log('_getCategoryMap_: Lookup sheet not found!');
   }
   
   _cachePut_(cacheKey, Array.from(map.entries()), CACHE_TTL);
@@ -2091,13 +2124,23 @@ function buildCalculatorUI_() {
   // Get X0 families only
   const categoryMap = _getCategoryMap_();
   const execMap = _getExecDescMap_();
+  
+  Logger.log(`Calculator X0: categoryMap size=${categoryMap.size}, execMap size=${execMap.size}`);
+  
   const x0Families = [];
   categoryMap.forEach((cat, code) => {
     if (cat === 'X0') {
       const desc = execMap.get(code);
-      if (desc) x0Families.push(desc);
+      if (desc) {
+        x0Families.push(desc);
+        if (x0Families.length <= 3) {
+          Logger.log(`  X0 family: ${code} → ${desc}`);
+        }
+      }
     }
   });
+  
+  Logger.log(`Calculator X0: Found ${x0Families.length} X0 families`);
   
   // Job Family dropdown (X0 families only)
   if (x0Families.length > 0) {
@@ -2107,6 +2150,10 @@ function buildCalculatorUI_() {
       .setAllowInvalid(false)
       .build();
     sh.getRange('B2').setDataValidation(rule);
+    Logger.log(`Calculator X0: Dropdown created with ${uniq.length} unique families`);
+  } else {
+    Logger.log('WARNING: No X0 families found! Dropdown not created. Check Lookup sheet.');
+    SpreadsheetApp.getActive().toast('⚠️ No X0 families found in Lookup sheet. Please run Fresh Build first.', 'Warning', 5);
   }
 
   // Labels (keeps existing styling; only writes text)
@@ -3889,13 +3936,23 @@ function buildCalculatorUIForY1_() {
   // Get Y1 families only
   const categoryMap = _getCategoryMap_();
   const execMap = _getExecDescMap_();
+  
+  Logger.log(`Calculator Y1: categoryMap size=${categoryMap.size}, execMap size=${execMap.size}`);
+  
   const y1Families = [];
   categoryMap.forEach((cat, code) => {
     if (cat === 'Y1') {
       const desc = execMap.get(code);
-      if (desc) y1Families.push(desc);
+      if (desc) {
+        y1Families.push(desc);
+        if (y1Families.length <= 3) {
+          Logger.log(`  Y1 family: ${code} → ${desc}`);
+        }
+      }
     }
   });
+  
+  Logger.log(`Calculator Y1: Found ${y1Families.length} Y1 families`);
   
   // Job Family dropdown (Y1 families only)
   if (y1Families.length > 0) {
@@ -3905,6 +3962,10 @@ function buildCalculatorUIForY1_() {
       .setAllowInvalid(false)
       .build();
     sh.getRange('B2').setDataValidation(rule);
+    Logger.log(`Calculator Y1: Dropdown created with ${uniq.length} unique families`);
+  } else {
+    Logger.log('WARNING: No Y1 families found! Dropdown not created. Check Lookup sheet.');
+    SpreadsheetApp.getActive().toast('⚠️ No Y1 families found in Lookup sheet. Please run Fresh Build first.', 'Warning', 5);
   }
   
   // Labels
@@ -5176,6 +5237,9 @@ function freshBuild() {
     SpreadsheetApp.getActive().toast('⏳ Step 3/5: Creating Lookup sheet...', 'Fresh Build', 3);
     createLookupSheet_();
     Utilities.sleep(500);
+    
+    // Clear caches so calculator UI reads fresh Lookup data
+    clearAllCaches_();
     
     // Step 4: Create both calculator UIs
     SpreadsheetApp.getActive().toast('⏳ Step 4/5: Creating calculator UIs...', 'Fresh Build', 3);
