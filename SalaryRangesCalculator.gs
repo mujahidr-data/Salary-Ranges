@@ -14,16 +14,19 @@
  * - Persistent legacy mapping storage
  * - Interactive calculator UI
  * 
- * @version 4.7.6
+ * @version 4.8.0
  * @date 2025-11-27
- * @changelog v4.7.6 - CRITICAL FIX: Apply Currency Format now works with new calculator
- *   - Fixed header detection to recognize "Range Start/Mid/End" (not just old "P62.5/P75/P90")
- *   - Now works with both X0 (Engineering) and Y1 (Everyone Else) calculators
- *   - Added success toast: "✅ Applied ₹/$£ format to X columns"
- *   - Shows detected region and sheet name
- *   - Issue: Function was looking for old column headers, couldn't find new format
- * @previous v4.7.5 - Data: Update HR.TMTA → HR.TATA (job family code change)
- *   - Renamed all instances of HR.TMTA to HR.TATA
+ * @changelog v4.8.0 - FEATURE: Rollup data fallback for missing market data
+ *   - When direct market data is missing, automatically falls back to rollup codes
+ *   - Rollup codes: .R3 (L3 IC/Mgr), .R4 (L4 IC/Mgr), .R5 (L5 IC/Mgr), etc.
+ *   - Example: No CS.RSTS.P4? Use CS.RSTS.R4 instead (covers both P4 and M4)
+ *   - Two-tier fallback: Direct → Rollup → .5 Level Averaging
+ *   - Solves: Rows with internal data but no market data
+ *   - _preloadAonData_() now recognizes and stores rollup codes
+ *   - rebuildFullListAllCombinations_() tries rollup before averaging
+ *   - Logging: "📊 Rollup used: CS.RSTS.R4 for L4 IC → P25=X, P625=Y"
+ * @previous v4.7.6 - CRITICAL FIX: Apply Currency Format now works with new calculator
+ *   - Fixed header detection to recognize "Range Start/Mid/End"
  *   - Fixed misleading "0 new mappings" message when updating existing mappings
  *   - Now shows: "X updated, Y new" instead of just "Y new"
  *   - Added change detection: Only updates if Aon Code or Level actually changed
@@ -5033,18 +5036,15 @@ function _preloadAonData_() {
       const jobCode = String(row[colJobCode] || '').trim();
       if (!jobCode) continue;
       
-      // Extract family code (e.g., "EN.SODE.P5" → "EN.SODE")
+      // Extract family code (e.g., "EN.SODE.P5" → "EN.SODE", "CS.RSTS.R4" → "CS.RSTS")
       const parts = jobCode.split('.');
       if (parts.length < 2) continue;
       const family = `${parts[0]}.${parts[1]}`;
       
-      // Extract level (e.g., "EN.SODE.P5" → "P5", then lookup to "L5 IC")
+      // Extract level token (e.g., "EN.SODE.P5" → "P5", "CS.RSTS.R4" → "R4")
       const levelToken = parts.length >= 3 ? parts[2] : '';
-      const ciqLevel = _parseLevelToken_(levelToken);
-      if (!ciqLevel) continue;
       
-      const key = `${region}|${family}|${ciqLevel}`;
-      aonCache.set(key, {
+      const percentileData = {
         p10: colP10 >= 0 && row[colP10] ? row[colP10] : '',
         p25: colP25 >= 0 && row[colP25] ? row[colP25] : '',
         p40: colP40 >= 0 && row[colP40] ? row[colP40] : '',
@@ -5052,11 +5052,37 @@ function _preloadAonData_() {
         p625: colP625 >= 0 && row[colP625] ? row[colP625] : '',
         p75: colP75 >= 0 && row[colP75] ? row[colP75] : '',
         p90: colP90 >= 0 && row[colP90] ? row[colP90] : ''
-      });
+      };
       
-      rowCount++;
-      if (rowCount <= 3) {
-        Logger.log(`Sample: ${jobCode} → ${family}, ${ciqLevel}, P25=${row[colP25]}, P625=${row[colP625]}`);
+      // Handle rollup codes (e.g., R4 = rollup for L4 IC and L4 Mgr)
+      if (/^R(\d+)$/i.test(levelToken)) {
+        const levelNum = levelToken.match(/^R(\d+)$/i)[1];
+        const rollupFamily = `${family}.${levelToken}`; // Store full code: CS.RSTS.R4
+        
+        // Store under BOTH IC and Mgr keys for this level
+        const icLevel = `L${levelNum} IC`;
+        const mgrLevel = `L${levelNum} Mgr`;
+        
+        aonCache.set(`${region}|${rollupFamily}|${icLevel}`, percentileData);
+        aonCache.set(`${region}|${rollupFamily}|${mgrLevel}`, percentileData);
+        
+        rowCount++;
+        if (rowCount <= 3) {
+          Logger.log(`Rollup: ${jobCode} → ${rollupFamily}, ${icLevel}+${mgrLevel}, P25=${row[colP25]}, P625=${row[colP625]}`);
+        }
+      }
+      // Handle regular codes (P5, M4, etc.)
+      else {
+        const ciqLevel = _parseLevelToken_(levelToken);
+        if (!ciqLevel) continue;
+        
+        const key = `${region}|${family}|${ciqLevel}`;
+        aonCache.set(key, percentileData);
+        
+        rowCount++;
+        if (rowCount <= 3) {
+          Logger.log(`Sample: ${jobCode} → ${family}, ${ciqLevel}, P25=${row[colP25]}, P625=${row[colP625]}`);
+        }
       }
     }
     
@@ -5203,7 +5229,27 @@ function rebuildFullListAllCombinations_() {
         const aonKey = `${region}|${aonCode}|${ciqLevel}`;
         let percentiles = aonCache.get(aonKey) || {};
         
-        // Handle .5 levels: If data not found, average neighboring levels
+        // FALLBACK 1: Try rollup data if direct data is missing
+        // Rollup codes: .R3 (for P3/M3), .R4 (for P4/M4), etc.
+        if (!percentiles.p25 && !percentiles.p625) {
+          const levelMatch = ciqLevel.match(/L([\d.]+)/);
+          if (levelMatch) {
+            const levelNum = Math.floor(parseFloat(levelMatch[1])); // L5 IC → 5, L5.5 IC → 5
+            const rollupKey = `${region}|${aonCode}.R${levelNum}|${ciqLevel}`;
+            const rollupData = aonCache.get(rollupKey);
+            
+            if (rollupData && (rollupData.p25 || rollupData.p625)) {
+              percentiles = rollupData;
+              
+              // Log first 5 rollup usages for debugging
+              if (totalCombinations <= 50 && (rollupData.p25 || rollupData.p625)) {
+                Logger.log(`📊 Rollup used: ${aonCode}.R${levelNum} for ${ciqLevel} → P25=${rollupData.p25}, P625=${rollupData.p625}`);
+              }
+            }
+          }
+        }
+        
+        // FALLBACK 2: Handle .5 levels: If data still not found, average neighboring levels
         if (ciqLevel.includes('.5') && (!percentiles.p25 && !percentiles.p625)) {
           const isIC = ciqLevel.includes('IC');
           const levelNum = parseFloat(ciqLevel.match(/L([\d.]+)/)[1]);
