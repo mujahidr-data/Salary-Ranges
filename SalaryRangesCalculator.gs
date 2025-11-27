@@ -14,9 +14,16 @@
  * - Persistent legacy mapping storage
  * - Interactive calculator UI
  * 
- * @version 4.6.7
+ * @version 4.6.8
  * @date 2025-11-27
- * @changelog v4.6.7 - CRITICAL HOTFIX: Fix internal stats by reading from Employees Mapped
+ * @changelog v4.6.8 - CRITICAL HOTFIX: Internal stats now ACTIVE employees only
+ *   - Bug: Internal stats included inactive employees (exits after Jan 1, 2024)
+ *   - Fix: Cross-reference with Base Data to check Active/Inactive status
+ *   - Build active status index from Base Data ONCE (Map: empID → isActive)
+ *   - Only include employees where activeStatusMap.get(empID) === true
+ *   - Aligns with requirement: Internal stats = active employees only
+ *   - Updated logging to show skipped inactive count
+ * @previous v4.6.7 - CRITICAL HOTFIX: Fix internal stats by reading from Employees Mapped
  *   - Bug: Internal Min/Med/Max/Count showing 0 or blank in Full List and calculators
  *   - Root cause: _buildInternalIndex_() was reading from Base Data which doesn't have Job Family Name column
  *   - Fix: Changed to read from Employees Mapped sheet (which has Aon Code column)
@@ -1370,10 +1377,37 @@ function _isNum_(v) { return v !== '' && v != null && isFinite(Number(v)); }
 function _buildInternalIndex_() {
   const ss = SpreadsheetApp.getActive();
   const empSh = ss.getSheetByName(SHEET_NAMES.EMPLOYEES_MAPPED);
+  const baseSh = ss.getSheetByName(SHEET_NAMES.BASE_DATA);
   const out = new Map();
   
   if (!empSh || empSh.getLastRow() <= 1) {
     Logger.log('WARNING: Employees Mapped sheet not found or empty - internal stats will be blank');
+    return out;
+  }
+  
+  if (!baseSh || baseSh.getLastRow() <= 1) {
+    Logger.log('WARNING: Base Data sheet not found or empty - cannot check active status');
+    return out;
+  }
+
+  // Build active status index from Base Data
+  const baseVals = baseSh.getDataRange().getValues();
+  const baseHead = baseVals[0].map(h => String(h || ''));
+  const iBaseEmpID = baseHead.findIndex(h => /Emp.*ID|Employee.*ID/i.test(h));
+  const iBaseActive = baseHead.findIndex(h => /Active.*Inactive/i.test(h));
+  
+  const activeStatusMap = new Map(); // empID → isActive
+  if (iBaseEmpID >= 0 && iBaseActive >= 0) {
+    for (let r = 1; r < baseVals.length; r++) {
+      const empID = String(baseVals[r][iBaseEmpID] || '').trim();
+      const activeStatus = String(baseVals[r][iBaseActive] || '').toLowerCase();
+      if (empID) {
+        activeStatusMap.set(empID, activeStatus === 'active');
+      }
+    }
+    Logger.log(`Built active status index: ${activeStatusMap.size} employees`);
+  } else {
+    Logger.log('WARNING: Could not find Emp ID or Active/Inactive columns in Base Data!');
     return out;
   }
 
@@ -1382,6 +1416,7 @@ function _buildInternalIndex_() {
   Logger.log(`Reading internal stats from Employees Mapped sheet: ${values.length} employees`);
   
   // Employees Mapped columns: EmpID, Name, Title, Dept, Site, AonCode, JobFamilyDesc, Level, Confidence, Source, Status, Salary, StartDate
+  const iEmpID = 0;     // Column A: Employee ID
   const iSite = 4;      // Column E: Site
   const iAonCode = 5;   // Column F: Aon Code
   const iLevel = 7;     // Column H: Level
@@ -1390,17 +1425,26 @@ function _buildInternalIndex_() {
 
   const buckets = new Map();
   let processedCount = 0;
+  let skippedInactive = 0;
   let skippedNoMapping = 0;
   let skippedNoSalary = 0;
   
   for (let r = 0; r < values.length; r++) {
     const row = values[r];
     
+    const empID = String(row[iEmpID] || '').trim();
     const site = String(row[iSite] || '').trim();
     const aonCode = String(row[iAonCode] || '').trim();
     const level = String(row[iLevel] || '').trim();
     const status = String(row[iStatus] || '').trim();
     const salary = row[iSalary];
+    
+    // CRITICAL: Only include ACTIVE employees for internal stats
+    const isActive = activeStatusMap.get(empID);
+    if (!isActive) {
+      skippedInactive++;
+      continue;
+    }
     
     // Skip if no mapping
     if (!aonCode || !level) {
@@ -1428,7 +1472,7 @@ function _buildInternalIndex_() {
     
     // Log first 3 employees for debugging
     if (processedCount <= 3) {
-      Logger.log(`Sample employee ${processedCount}: site=${normSite}, aonCode=${aonCode}, level=${level}, pay=${pay}, status=${status}`);
+      Logger.log(`Sample employee ${processedCount}: empID=${empID}, site=${normSite}, aonCode=${aonCode}, level=${level}, pay=${pay}, status=${status}, active=true`);
     }
     
     // Create key: Region|AonCode|Level (e.g., "USA|EN.SODE|L5 IC")
@@ -1441,7 +1485,8 @@ function _buildInternalIndex_() {
     }
   }
   
-  Logger.log(`Processed ${processedCount} employees with approved mappings, skipped ${skippedNoMapping} without mapping, skipped ${skippedNoSalary} without salary`);
+  Logger.log(`Processed ${processedCount} ACTIVE employees with approved mappings`);
+  Logger.log(`Skipped: ${skippedInactive} inactive, ${skippedNoMapping} without mapping, ${skippedNoSalary} without salary`);
   buckets.forEach((arr, key) => {
     arr.sort((a,b)=>a-b);
     const n = arr.length; const min = arr[0], max = arr[n-1];
