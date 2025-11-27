@@ -3469,26 +3469,28 @@ function syncEmployeesMappedSheet_() {
   
   // Create headers if needed
   if (empSh.getLastRow() === 0) {
-    empSh.getRange(1,1,1,12).setValues([[ 
+    empSh.getRange(1,1,1,15).setValues([[ 
       'Employee ID', 'Employee Name', 'Job Title', 'Department', 'Site',
-      'Aon Code', 'Level', 'Confidence', 'Source', 'Status', 'Base Salary', 'Start Date'
+      'Aon Code', 'Job Family (Exec Description)', 'Level', 'Confidence', 'Source', 'Status', 'Base Salary', 'Start Date',
+      'Level Anomaly', 'Title Anomaly'
     ]]);
     empSh.setFrozenRows(1);
-    empSh.getRange(1,1,1,12).setFontWeight('bold');
+    empSh.getRange(1,1,1,15).setFontWeight('bold');
   }
   
   // Get existing mappings (preserve approved ones)
   const existing = new Map();
   if (empSh.getLastRow() > 1) {
-    const empVals = empSh.getRange(2,1,empSh.getLastRow()-1,12).getValues();
+    const empVals = empSh.getRange(2,1,empSh.getLastRow()-1,15).getValues();
     empVals.forEach(row => {
       if (row[0]) {
         existing.set(String(row[0]).trim(), {
           aonCode: row[5] || '',
-          level: row[6] || '',
-          confidence: row[7] || '',
-          source: row[8] || '',
-          status: row[9] || ''
+          jobFamilyDesc: row[6] || '',
+          level: row[7] || '',
+          confidence: row[8] || '',
+          source: row[9] || '',
+          status: row[10] || ''
         });
       }
     });
@@ -3513,8 +3515,63 @@ function syncEmployeesMappedSheet_() {
     return;
   }
   
-  // Build title mapping index
-  const titleMap = _buildTitleMappingIndex_();
+  // Build title-to-mapping suggestions inline (no separate Title Mapping sheet needed)
+  const titleToMappings = new Map(); // title → [{aonCode, level, count}, ...]
+  
+  // Collect from Legacy Mappings
+  const legacySh = ss.getSheetByName(SHEET_NAMES.LEGACY_MAPPINGS);
+  if (legacySh && legacySh.getLastRow() > 1) {
+    const legacyVals = legacySh.getRange(2,1,legacySh.getLastRow()-1,3).getValues();
+    legacyVals.forEach(row => {
+      const legacyEmpID = String(row[0] || '').trim();
+      const fullMapping = String(row[2] || '').trim();
+      if (!legacyEmpID || !fullMapping) return;
+      
+      // Parse full mapping (e.g., "EN.SODE.P5")
+      const parts = fullMapping.split('.');
+      if (parts.length < 3) return;
+      
+      const aonCode = `${parts[0]}.${parts[1]}`;
+      const levelToken = parts[2];
+      const ciqLevel = _parseLevelToken_(levelToken);
+      if (!ciqLevel) return;
+      
+      // Find title for this employee in Base Data
+      for (let i = 1; i < baseVals.length; i++) {
+        if (String(baseVals[i][iEmpID] || '').trim() === legacyEmpID) {
+          const jobTitle = iTitle >= 0 ? String(baseVals[i][iTitle] || '').trim() : '';
+          if (jobTitle) {
+            if (!titleToMappings.has(jobTitle)) {
+              titleToMappings.set(jobTitle, new Map());
+            }
+            const key = `${aonCode}|${ciqLevel}`;
+            const mappingMap = titleToMappings.get(jobTitle);
+            mappingMap.set(key, (mappingMap.get(key) || 0) + 1);
+          }
+          break;
+        }
+      }
+    });
+  }
+  
+  // Build most common mapping per title
+  const titleMap = new Map();
+  titleToMappings.forEach((mappings, title) => {
+    let maxCount = 0, bestMapping = null;
+    mappings.forEach((count, key) => {
+      if (count > maxCount) {
+        maxCount = count;
+        const [aonCode, level] = key.split('|');
+        bestMapping = {aonCode, level, count};
+      }
+    });
+    if (bestMapping) {
+      titleMap.set(title, bestMapping);
+    }
+  });
+  
+  // Get Job Family descriptions from Lookup
+  const execDescMap = _getExecDescMap_();
   
   // Build new rows
   const rows = [];
@@ -3534,6 +3591,7 @@ function syncEmployeesMappedSheet_() {
     const startDate = iStart >= 0 ? row[iStart] : '';
     
     let aonCode = '', ciqLevel = '', confidence = '', source = '', status = 'Needs Review';
+    let jobFamilyDesc = '';
     
     // Priority 1: Check if existing mapping is Approved
     const prev = existing.get(empID);
@@ -3584,20 +3642,53 @@ function syncEmployeesMappedSheet_() {
       }
     }
     
-    rows.push([empID, name, title, dept, site, aonCode, ciqLevel, confidence, source, status, salary, startDate]);
+    // Get Job Family Description
+    if (aonCode) {
+      jobFamilyDesc = execDescMap.get(aonCode) || '';
+    }
+    
+    // Anomaly Detection
+    let levelAnomaly = '';
+    let titleAnomaly = '';
+    
+    // Level Anomaly: Check if CIQ level matches expected Aon level
+    if (aonCode && ciqLevel) {
+      // Expected Aon level token from CIQ level (e.g., "L5 IC" → "P5")
+      const expectedToken = _ciqLevelToToken_(ciqLevel);
+      // Actual token from Aon Code (e.g., "EN.SODE.P5" → "P5")
+      const parts = aonCode.split('.');
+      const actualToken = parts.length >= 3 ? parts[2] : '';
+      
+      if (expectedToken && actualToken && expectedToken !== actualToken) {
+        levelAnomaly = `Expected ${expectedToken}, got ${actualToken}`;
+      }
+    }
+    
+    // Title Anomaly: Check if this employee's mapping differs from others with same title
+    if (title && aonCode && ciqLevel && titleMap.has(title)) {
+      const commonMapping = titleMap.get(title);
+      const currentKey = `${aonCode}|${ciqLevel}`;
+      const commonKey = `${commonMapping.aonCode}|${commonMapping.level}`;
+      
+      if (currentKey !== commonKey) {
+        titleAnomaly = `${commonMapping.count} others: ${commonMapping.aonCode} ${commonMapping.level}`;
+      }
+    }
+    
+    rows.push([empID, name, title, dept, site, aonCode, jobFamilyDesc, ciqLevel, confidence, source, status, salary, startDate, levelAnomaly, titleAnomaly]);
   }
   
   // Write to sheet
-  empSh.getRange(2,1,Math.max(1, empSh.getMaxRows()-1),12).clearContent();
+  empSh.getRange(2,1,Math.max(1, empSh.getMaxRows()-1),15).clearContent();
   if (rows.length) {
-    empSh.getRange(2,1,rows.length,12).setValues(rows);
+    empSh.getRange(2,1,rows.length,15).setValues(rows);
     
-    // Add data validation for Status column (J)
+    // Add data validation for Status column (K)
     const statusRule = SpreadsheetApp.newDataValidation()
       .requireValueInList(['Needs Review', 'Approved', 'Rejected'], true)
       .setAllowInvalid(false)
       .build();
-    empSh.getRange(2,10,rows.length,1).setDataValidation(statusRule);
+    empSh.getRange(2,11,rows.length,1).setDataValidation(statusRule);
   }
   
   // Add conditional formatting
@@ -3606,28 +3697,44 @@ function syncEmployeesMappedSheet_() {
   
   // Green: Approved
   rules.push(SpreadsheetApp.newConditionalFormatRule()
-    .whenFormulaSatisfied('=$J2="Approved"')
+    .whenFormulaSatisfied('=$K2="Approved"')
     .setBackground('#D5F5E3')
-    .setRanges([empSh.getRange('A2:L')])
+    .setRanges([empSh.getRange('A2:O')])
     .build());
   
   // Yellow: Needs Review
   rules.push(SpreadsheetApp.newConditionalFormatRule()
-    .whenFormulaSatisfied('=$J2="Needs Review"')
+    .whenFormulaSatisfied('=$K2="Needs Review"')
     .setBackground('#FFF9C4')
-    .setRanges([empSh.getRange('A2:L')])
+    .setRanges([empSh.getRange('A2:O')])
     .build());
   
   // Red: Rejected or missing mapping
   rules.push(SpreadsheetApp.newConditionalFormatRule()
-    .whenFormulaSatisfied('=OR($J2="Rejected",AND(LEN($A2)>0,OR(LEN($F2)=0,LEN($G2)=0)))')
+    .whenFormulaSatisfied('=OR($K2="Rejected",AND(LEN($A2)>0,OR(LEN($F2)=0,LEN($H2)=0)))')
     .setBackground('#FDE7E9')
     .setFontColor('#D32F2F')
-    .setRanges([empSh.getRange('A2:L')])
+    .setRanges([empSh.getRange('A2:O')])
+    .build());
+  
+  // Orange: Level Anomaly
+  rules.push(SpreadsheetApp.newConditionalFormatRule()
+    .whenFormulaSatisfied('=LEN($N2)>0')
+    .setBackground('#FFE5CC')
+    .setFontColor('#E65100')
+    .setRanges([empSh.getRange('N2:N')])
+    .build());
+  
+  // Purple: Title Anomaly
+  rules.push(SpreadsheetApp.newConditionalFormatRule()
+    .whenFormulaSatisfied('=LEN($O2)>0')
+    .setBackground('#E1D5F7')
+    .setFontColor('#6A1B9A')
+    .setRanges([empSh.getRange('O2:O')])
     .build());
   
   empSh.setConditionalFormatRules(rules);
-  empSh.autoResizeColumns(1,12);
+  empSh.autoResizeColumns(1,15);
   
   const msg = `Synced ${rows.length} employees:\n` +
     `✓ Approved: ${approvedCount}\n` +
@@ -4277,23 +4384,13 @@ function importBobDataHeadless() {
     importBobPerformanceRatings();
     Utilities.sleep(1000);
     
-    // Step 5: Seed Title Mapping from Legacy (MUST run before Employees Mapped sync)
-    Logger.log('Step 5/8: Seeding Title Mapping from legacy data...');
-    _seedTitleMappingFromLegacy_();
-    Utilities.sleep(500);
-    
-    // Step 6: Sync Employees Mapped with smart logic (uses Title Mapping for suggestions)
-    Logger.log('Step 6/8: Syncing Employees Mapped (smart mapping)...');
+    // Step 5: Sync Employees Mapped with smart logic and anomaly detection
+    Logger.log('Step 5/6: Syncing Employees Mapped (smart mapping + anomaly detection)...');
     syncEmployeesMappedSheet_();
     Utilities.sleep(500);
     
-    // Step 7: Refine Title Mapping from approved mappings
-    Logger.log('Step 7/8: Refining Title Mapping...');
-    syncTitleMapping_();
-    Utilities.sleep(500);
-    
-    // Step 8: Update Legacy Mappings from approved entries (feedback loop)
-    Logger.log('Step 8/8: Updating Legacy Mappings from approved entries...');
+    // Step 6: Update Legacy Mappings from approved entries (feedback loop)
+    Logger.log('Step 6/6: Updating Legacy Mappings from approved entries...');
     updateLegacyMappingsFromApproved_();
     Utilities.sleep(500);
     
@@ -4344,9 +4441,8 @@ function importBobData() {
     '✓ Bonus History (latest per employee)\n' +
     '✓ Comp History (latest per employee)\n' +
     '✓ Performance Ratings (latest ratings)\n' +
-    '✓ Seed Title Mapping from legacy data\n' +
     '✓ Auto-sync Employees Mapped with smart suggestions\n' +
-    '✓ Refine Title Mapping from approved mappings\n\n' +
+    '✓ Anomaly detection (level & title mismatches)\n\n' +
     'Prerequisites:\n' +
     '• BOB_ID and BOB_KEY configured in Script Properties\n\n' +
     'Continue?',
@@ -4376,9 +4472,9 @@ function importBobData() {
       '   Change Status dropdown to approve mappings\n\n' +
       '2️⃣ For each employee, verify:\n' +
       '   • Aon Code (job family)\n' +
-      '   • Level (L2 IC through L9 Mgr)\n\n' +
-      '2️⃣ Review "Title Mapping" sheet\n' +
-      '   Map job titles to Aon Codes\n\n' +
+      '   • Level (L2 IC through L9 Mgr)\n' +
+      '   • Check Level Anomaly column (orange)\n' +
+      '   • Check Title Anomaly column (purple)\n\n' +
       '3️⃣ Run: 📊 Build Market Data\n\n' +
       'Ready?',
       ui.ButtonSet.OK
@@ -4478,7 +4574,6 @@ function onOpen() {
     .addItem('🗑️ Clear All Caches', 'clearAllCaches_')
     .addSeparator()
     .addItem('🔄 Update Legacy Mappings from Approved', 'updateLegacyMappingsFromApproved_')
-    .addItem('🔄 Sync Title Mapping', 'syncTitleMapping_')
     .addSeparator()
     .addItem('📖 Generate Help Sheet', 'buildHelpSheet_')
     .addItem('ℹ️ Quick Instructions', 'showInstructions');
