@@ -76,7 +76,7 @@ This will:
   * **Avg CR**: All approved active employees
   * **TT CR**: Employees with AYR 2024 = "HH"
   * **BT CR**: Employees with AYR 2024 IN ("ML", "NI")
-  * **New Hire CR**: Employees with Start Date >= 2025-01-01
+  * **New Hire CR**: Employees with Start Date within last 365 days
 - Populate both calculators with data
 
 ---
@@ -113,8 +113,8 @@ This will:
 - **Purpose**: Shows how we compensate high performers
 
 ### **New Hire CR**
-- **Filter**: Status = "Approved" AND Start Date >= 2025-01-01
-- **Formula**: Average(Salary / Range Mid) for 2025 hires
+- **Filter**: Status = "Approved" AND Start Date within last 365 days
+- **Formula**: Average(Salary / Range Mid) for recent hires (last 365 days)
 - **Purpose**: Shows new hire positioning
 
 ### **BT CR** (Below Talent Compa Ratio)

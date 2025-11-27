@@ -3698,7 +3698,8 @@ function _calculateCRStats_(jobFamily, ciqLevel, region, midPoint) {
     // Get employees and calculate CRs
     const empVals = empSh.getRange(2,1,empSh.getLastRow()-1,12).getValues();
     const execMap = _getExecDescMap_();
-    const cutoffDate = new Date('2025-01-01');
+    // New Hire cutoff: last 365 days from today
+    const cutoffDate = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000);
     
     let avgTotal = 0, avgCount = 0;
     let ttTotal = 0, ttCount = 0;
@@ -3749,7 +3750,7 @@ function _calculateCRStats_(jobFamily, ciqLevel, region, midPoint) {
         btCount++;
       }
       
-      // New Hire CR (Start Date >= 2025-01-01)
+      // New Hire CR (Start Date within last 365 days)
       if (startDate && startDate instanceof Date && startDate >= cutoffDate) {
         nhTotal += cr;
         nhCount++;
@@ -4003,7 +4004,7 @@ function rebuildFullListAllCombinations_() {
           intStats.cnt,
           crStats.avgCR,      // Avg CR (active employees)
           crStats.ttCR,       // TT CR (AYR 2024 = "HH")
-          crStats.newHireCR,  // New Hire CR (Start Date >= 2025)
+          crStats.newHireCR,  // New Hire CR (Start Date within last 365 days)
           crStats.btCR,       // BT CR (AYR 2024 IN ("ML", "NI"))
           key
         ]);
