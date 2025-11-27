@@ -1588,9 +1588,11 @@ function buildHelpSheet_() {
     ['═══════════════════════════════════════════════════════════════════════════════'],
     [''],
     ['Weekly/Monthly Data Refresh:'],
-    ['1) 📥 Import Bob Data (get latest employees)'],
-    ['2) Update "Employees Mapped" if needed (legacy/manual)'],
-    ['3) 📊 Build Market Data (rebuild Full Lists)'],
+    ['1) 📥 Import Bob Data (auto-syncs all employees with smart suggestions)'],
+    ['2) ✅ Review Employee Mappings (approve new/changed mappings)'],
+    ['3) 📊 Build Market Data (rebuilds Full Lists with CR values)'],
+    [''],
+    ['💡 Feedback Loop: Approved mappings auto-update Legacy Mappings for next import'],
     [''],
     ['After Aon Data Update:'],
     ['1) Paste new Aon data into region tabs'],
@@ -1649,11 +1651,12 @@ function buildHelpSheet_() {
     ['🗺️ MAPPING SHEETS'],
     ['═══════════════════════════════════════════════════════════════════════════════'],
     [''],
-    ['Employees Mapped - Maps employees to Aon codes and levels (LEGACY/MANUAL)'],
-    ['   Columns: Employee ID, Name, Aon Code, Level, Site, Salary, Status'],
-    ['   Purpose: Define which job family and level each employee belongs to'],
-    ['   Updated: Manually maintained (not auto-synced)'],
-    ['   Note: Referenced by CR columns in calculators'],
+    ['Employees Mapped - Smart employee-to-Aon code mapping with approval workflow'],
+    ['   Columns: Employee ID, Name, Title, Dept, Site, Aon Code, Level, Confidence, Source, Status, Salary, Start Date'],
+    ['   Purpose: Map employees to job families and levels for CR calculations'],
+    ['   Updated: Auto-synced during Import Bob Data (uses Legacy + Title mappings)'],
+    ['   Workflow: Review → Approve → Auto-updates Legacy Mappings'],
+    ['   Sources: Legacy (100%), Title-Based (95%), Manual (50%)'],
     [''],
     ['Job family Descriptions - Maps Aon codes to friendly names'],
     ['   Columns: Aon Code, Job Family (Exec Description)'],
@@ -1665,15 +1668,21 @@ function buildHelpSheet_() {
     ['   Purpose: Helps suggest mappings for employees'],
     ['   Updated: Auto-synced when you run "Import Bob Data"'],
     [''],
-    ['Employee Level Mapping - (Legacy, replaced by Employees Mapped)'],
-    ['   Still present for backward compatibility'],
+    ['Legacy Mappings - Historical employee mapping data (feedback loop)'],
+    ['   Columns: Employee ID, Job Family, Full Mapping'],
+    ['   Purpose: Stores approved mappings for future imports'],
+    ['   Updated: Auto-updated from Employees Mapped (approved entries only)'],
+    ['   Feedback Loop: Approved mappings → Legacy → Next import (100% confidence)'],
     [''],
-    ['Aon Code Remap - Handles Aon vendor code changes'],
-    ['   Example: EN.SOML → EN.AIML (when Aon renames codes)'],
+    ['Lookup - Comprehensive mapping reference (single source of truth)'],
+    ['   Section 1: CIQ Level → Aon Level mapping (L5 IC → P5)'],
+    ['   Section 2: Region/Site → FX rates (US=1.0, UK=1.37, India=0.0125)'],
+    ['   Section 3: Aon Code → Job Family + Category (71 codes)'],
     [''],
-    ['Lookup - Level mapping and FX rates'],
-    ['   Contains: CIQ Level → Aon Level mapping'],
-    ['   Contains: Region → FX Rate (US=1.0, UK=1.37, India=0.0125)'],
+    ['DEPRECATED SHEETS (delete if present):'],
+    ['   ❌ Job family Descriptions - Use Lookup instead'],
+    ['   ❌ Employee Level Mapping - Use Employees Mapped instead'],
+    ['   ❌ Aon Code Remap - Handled in code'],
     [''],
     ['═══════════════════════════════════════════════════════════════════════════════'],
     ['🛠️ TOOLS MENU'],
@@ -3120,6 +3129,130 @@ function _getLegacyMapping_(empID) {
 }
 
 /**
+ * Updates Legacy Mappings sheet from approved Employees Mapped entries
+ * This creates a feedback loop: approved mappings become the new legacy data
+ */
+function updateLegacyMappingsFromApproved_() {
+  const ss = SpreadsheetApp.getActive();
+  const empSh = ss.getSheetByName(SHEET_NAMES.EMPLOYEES_MAPPED);
+  const legacySh = ss.getSheetByName(SHEET_NAMES.LEGACY_MAPPINGS);
+  
+  if (!empSh || empSh.getLastRow() <= 1) {
+    SpreadsheetApp.getActive().toast('Employees Mapped sheet not found', 'Skipped', 3);
+    return;
+  }
+  
+  if (!legacySh) {
+    SpreadsheetApp.getActive().toast('Legacy Mappings sheet not found', 'Skipped', 3);
+    return;
+  }
+  
+  // Get all approved mappings from Employees Mapped
+  const empVals = empSh.getRange(2,1,empSh.getLastRow()-1,12).getValues();
+  const approvedMappings = new Map(); // empID → {jobFamily, fullMapping}
+  
+  empVals.forEach(row => {
+    const empID = String(row[0] || '').trim();
+    const aonCode = String(row[5] || '').trim();
+    const ciqLevel = String(row[6] || '').trim();
+    const status = String(row[9] || '').trim();
+    
+    // Only sync approved mappings
+    if (status === 'Approved' && empID && aonCode && ciqLevel) {
+      const jobFamily = aonCode; // e.g., "EN.SODE"
+      const levelToken = _ciqLevelToToken_(ciqLevel); // e.g., "L5 IC" → "P5"
+      const fullMapping = levelToken ? `${aonCode}.${levelToken}` : '';
+      
+      if (fullMapping) {
+        approvedMappings.set(empID, {jobFamily, fullMapping});
+      }
+    }
+  });
+  
+  if (approvedMappings.size === 0) {
+    SpreadsheetApp.getActive().toast('No approved mappings to sync', 'Legacy Mappings', 3);
+    return;
+  }
+  
+  // Get existing legacy data
+  const existingMap = new Map(); // empID → row index
+  if (legacySh.getLastRow() > 1) {
+    const legacyVals = legacySh.getRange(2,1,legacySh.getLastRow()-1,3).getValues();
+    legacyVals.forEach((row, idx) => {
+      const empID = String(row[0] || '').trim();
+      if (empID) {
+        existingMap.set(empID, idx + 2); // +2 for header and 0-index
+      }
+    });
+  }
+  
+  // Prepare update/insert rows
+  const updates = []; // [rowNum, [empID, jobFamily, fullMapping]]
+  const inserts = []; // [empID, jobFamily, fullMapping]
+  
+  approvedMappings.forEach((mapping, empID) => {
+    if (existingMap.has(empID)) {
+      // Update existing row
+      const rowNum = existingMap.get(empID);
+      updates.push([rowNum, [empID, mapping.jobFamily, mapping.fullMapping]]);
+    } else {
+      // Insert new row
+      inserts.push([empID, mapping.jobFamily, mapping.fullMapping]);
+    }
+  });
+  
+  // Apply updates
+  updates.forEach(([rowNum, data]) => {
+    legacySh.getRange(rowNum, 1, 1, 3).setValues([data]);
+  });
+  
+  // Apply inserts
+  if (inserts.length > 0) {
+    legacySh.getRange(legacySh.getLastRow() + 1, 1, inserts.length, 3).setValues(inserts);
+  }
+  
+  const msg = `Updated Legacy Mappings: ${updates.length} updated, ${inserts.length} new`;
+  SpreadsheetApp.getActive().toast(msg, 'Legacy Mappings Synced', 5);
+}
+
+/**
+ * Converts CIQ level to Aon level token
+ * E.g., "L5 IC" → "P5", "L4 Mgr" → "M4", "L7 Mgr" → "E3"
+ */
+function _ciqLevelToToken_(ciqLevel) {
+  const s = String(ciqLevel || '').trim();
+  const match = s.match(/^L([\d.]+)\s+(IC|Mgr)$/i);
+  if (!match) return '';
+  
+  const levelNum = parseFloat(match[1]);
+  const role = match[2].toLowerCase();
+  
+  if (role === 'ic') {
+    // IC levels
+    if (levelNum <= 6.5) {
+      return `P${Math.floor(levelNum)}`;
+    } else {
+      return 'E1'; // L7 IC = E1
+    }
+  } else {
+    // Manager levels
+    if (levelNum <= 6.5) {
+      return `M${Math.floor(levelNum)}`;
+    } else if (levelNum === 7) {
+      return 'E1';
+    } else if (levelNum === 8) {
+      return 'E3';
+    } else if (levelNum === 9) {
+      return 'E5';
+    } else if (levelNum === 10) {
+      return 'E6';
+    }
+  }
+  
+  return '';
+}
+
+/**
  * Parses Aon level token (P5, M4, E3) to CIQ level (L5 IC, L4 Mgr, L3 IC)
  */
 function _parseLevelToken_(token) {
@@ -4189,8 +4322,13 @@ function importBobData() {
     Utilities.sleep(500);
     
     // Step 6: Sync Employees Mapped with smart logic
-    SpreadsheetApp.getActive().toast('⏳ Step 6/6: Syncing Employees Mapped (smart mapping)...', 'Import Bob Data', 3);
+    SpreadsheetApp.getActive().toast('⏳ Step 6/7: Syncing Employees Mapped (smart mapping)...', 'Import Bob Data', 3);
     syncEmployeesMappedSheet_();
+    Utilities.sleep(500);
+    
+    // Step 7: Update Legacy Mappings from approved entries
+    SpreadsheetApp.getActive().toast('⏳ Step 7/7: Updating Legacy Mappings from approved entries...', 'Import Bob Data', 3);
+    updateLegacyMappingsFromApproved_();
     Utilities.sleep(500);
     
     // Success
@@ -4302,6 +4440,9 @@ function onOpen() {
   const toolsMenu = ui.createMenu('🔧 Tools')
     .addItem('💱 Apply Currency Format', 'applyCurrency_')
     .addItem('🗑️ Clear All Caches', 'clearAllCaches_')
+    .addSeparator()
+    .addItem('🔄 Update Legacy Mappings from Approved', 'updateLegacyMappingsFromApproved_')
+    .addItem('🔄 Sync Title Mapping', 'syncTitleMapping_')
     .addSeparator()
     .addItem('📖 Generate Help Sheet', 'buildHelpSheet_')
     .addItem('ℹ️ Quick Instructions', 'showInstructions');
