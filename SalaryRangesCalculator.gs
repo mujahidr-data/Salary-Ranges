@@ -3768,6 +3768,114 @@ function _calculateCRStats_(jobFamily, ciqLevel, region, midPoint) {
 }
 
 /**
+ * Seeds Title Mapping from Legacy Mappings + Base Data
+ * This must run BEFORE syncEmployeesMappedSheet_ to enable smart suggestions
+ */
+function _seedTitleMappingFromLegacy_() {
+  const ss = SpreadsheetApp.getActive();
+  const baseSh = ss.getSheetByName(SHEET_NAMES.BASE_DATA);
+  const legacySh = ss.getSheetByName(SHEET_NAMES.LEGACY_MAPPINGS);
+  
+  if (!baseSh || baseSh.getLastRow() <= 1) return;
+  if (!legacySh || legacySh.getLastRow() <= 1) return;
+  
+  // Get Base Data (EmpID → Title)
+  const baseVals = baseSh.getDataRange().getValues();
+  const baseHead = baseVals[0].map(h => String(h||''));
+  const iEmpID = baseHead.findIndex(h => /Employee.*ID/i.test(h));
+  const iTitle = baseHead.findIndex(h => /Job.*Title/i.test(h));
+  if (iTitle < 0 || iEmpID < 0) return;
+  
+  const empIDToTitle = new Map();
+  for (let r = 1; r < baseVals.length; r++) {
+    const empID = String(baseVals[r][iEmpID] || '').trim();
+    const title = String(baseVals[r][iTitle] || '').trim();
+    if (empID && title) {
+      empIDToTitle.set(empID, title);
+    }
+  }
+  
+  // Get Legacy Mappings (EmpID → Aon Code + Level)
+  const legacyVals = legacySh.getRange(2,1,legacySh.getLastRow()-1,3).getValues();
+  const titleToMappings = new Map(); // title → [{aonCode, level}, ...]
+  
+  legacyVals.forEach(row => {
+    const empID = String(row[0] || '').trim();
+    const fullMapping = String(row[2] || '').trim();
+    if (!empID || !fullMapping) return;
+    
+    // Parse full mapping (e.g., "EN.SODE.P5")
+    const parts = fullMapping.split('.');
+    if (parts.length < 3) return;
+    
+    const aonCode = `${parts[0]}.${parts[1]}`;
+    const levelToken = parts[2];
+    const ciqLevel = _parseLevelToken_(levelToken);
+    if (!ciqLevel) return;
+    
+    // Get title for this employee
+    const title = empIDToTitle.get(empID);
+    if (!title) return;
+    
+    if (!titleToMappings.has(title)) {
+      titleToMappings.set(title, []);
+    }
+    titleToMappings.get(title).push({aonCode, level: ciqLevel});
+  });
+  
+  // Calculate most common mapping for each title
+  const titleMappings = [];
+  titleToMappings.forEach((mappings, title) => {
+    // Count frequency of each aonCode+level combination
+    const freqMap = new Map();
+    mappings.forEach(({aonCode, level}) => {
+      const key = `${aonCode}|${level}`;
+      freqMap.set(key, (freqMap.get(key) || 0) + 1);
+    });
+    
+    // Find most common
+    let maxCount = 0, bestMapping = null;
+    freqMap.forEach((count, key) => {
+      if (count > maxCount) {
+        maxCount = count;
+        const [aonCode, level] = key.split('|');
+        bestMapping = {aonCode, level, count};
+      }
+    });
+    
+    if (bestMapping) {
+      titleMappings.push([title, bestMapping.aonCode, bestMapping.level, bestMapping.count]);
+    }
+  });
+  
+  // Write to Title Mapping sheet
+  const titleSh = ss.getSheetByName('Title Mapping') || ss.insertSheet('Title Mapping');
+  titleSh.setTabColor('#FF0000');
+  
+  if (titleSh.getLastRow() === 0) {
+    titleSh.getRange(1,1,1,4).setValues([['Job Title', 'Aon Code', 'Level', 'Count']]);
+    titleSh.setFrozenRows(1);
+    titleSh.getRange(1,1,1,4).setFontWeight('bold');
+  }
+  
+  // Clear and write
+  if (titleSh.getLastRow() > 1) {
+    titleSh.getRange(2,1,titleSh.getMaxRows()-1,4).clearContent();
+  }
+  
+  if (titleMappings.length) {
+    titleSh.getRange(2,1,titleMappings.length,4).setValues(titleMappings);
+    titleSh.autoResizeColumns(1,4);
+  }
+  
+  SpreadsheetApp.getActive().toast(
+    `Title Mapping seeded: ${titleMappings.length} titles`,
+    'Title Mapping',
+    3
+  );
+}
+
+/**
  * Syncs Title Mapping sheet with Base Data
  */
 /**
@@ -4143,8 +4251,9 @@ function importBobData() {
     '✓ Bonus History (latest per employee)\n' +
     '✓ Comp History (latest per employee)\n' +
     '✓ Performance Ratings (latest ratings)\n' +
-    '✓ Auto-sync Title Mapping sheet\n\n' +
-    'Note: "Employees Mapped" is legacy/manual (not auto-synced)\n\n' +
+    '✓ Seed Title Mapping from legacy data\n' +
+    '✓ Auto-sync Employees Mapped with smart suggestions\n' +
+    '✓ Refine Title Mapping from approved mappings\n\n' +
     'Prerequisites:\n' +
     '• BOB_ID and BOB_KEY configured in Script Properties\n\n' +
     'Continue?',
@@ -4173,22 +4282,27 @@ function importBobData() {
     Utilities.sleep(1000);
     
     // Step 4: Import Performance Ratings
-    SpreadsheetApp.getActive().toast('⏳ Step 4/6: Importing Performance Ratings...', 'Import Bob Data', 3);
+    SpreadsheetApp.getActive().toast('⏳ Step 4/8: Importing Performance Ratings...', 'Import Bob Data', 3);
     importBobPerformanceRatings();
     Utilities.sleep(1000);
     
-    // Step 5: Sync Title Mapping
-    SpreadsheetApp.getActive().toast('⏳ Step 5/6: Syncing Title Mapping...', 'Import Bob Data', 3);
-    syncTitleMapping_();
+    // Step 5: Seed Title Mapping from Legacy (MUST run before Employees Mapped sync)
+    SpreadsheetApp.getActive().toast('⏳ Step 5/8: Seeding Title Mapping from legacy data...', 'Import Bob Data', 3);
+    _seedTitleMappingFromLegacy_();
     Utilities.sleep(500);
     
-    // Step 6: Sync Employees Mapped with smart logic
-    SpreadsheetApp.getActive().toast('⏳ Step 6/7: Syncing Employees Mapped (smart mapping)...', 'Import Bob Data', 3);
+    // Step 6: Sync Employees Mapped with smart logic (uses Title Mapping for suggestions)
+    SpreadsheetApp.getActive().toast('⏳ Step 6/8: Syncing Employees Mapped (smart mapping)...', 'Import Bob Data', 3);
     syncEmployeesMappedSheet_();
     Utilities.sleep(500);
     
-    // Step 7: Update Legacy Mappings from approved entries
-    SpreadsheetApp.getActive().toast('⏳ Step 7/7: Updating Legacy Mappings from approved entries...', 'Import Bob Data', 3);
+    // Step 7: Refine Title Mapping from approved mappings
+    SpreadsheetApp.getActive().toast('⏳ Step 7/8: Refining Title Mapping...', 'Import Bob Data', 3);
+    syncTitleMapping_();
+    Utilities.sleep(500);
+    
+    // Step 8: Update Legacy Mappings from approved entries (feedback loop)
+    SpreadsheetApp.getActive().toast('⏳ Step 8/8: Updating Legacy Mappings from approved entries...', 'Import Bob Data', 3);
     updateLegacyMappingsFromApproved_();
     Utilities.sleep(500);
     
