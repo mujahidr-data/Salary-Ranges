@@ -40,13 +40,15 @@
 const BOB_REPORT_IDS = {
   BASE_DATA: "31048356",
   BONUS_HISTORY: "31054302",
-  COMP_HISTORY: "31054312"
+  COMP_HISTORY: "31054312",
+  PERF_RATINGS: "31172066"
 };
 
 const SHEET_NAMES = {
   BASE_DATA: "Base Data",
   BONUS_HISTORY: "Bonus History",
   COMP_HISTORY: "Comp History",
+  PERF_RATINGS: "Performance Ratings",
   SALARY_RANGES_X0: "Salary Ranges (X0)",
   SALARY_RANGES_Y1: "Salary Ranges (Y1)",
   FULL_LIST: "Full List",
@@ -339,12 +341,16 @@ function importBobDataSimpleWithLookup() {
     
     Logger.log(`Processed ${out.length - 1} rows for ${sheetName}`);
     
-    // Write to sheet
+    // Write to sheet (preserve custom columns by only clearing what we write)
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const sheet = getOrCreateSheet(ss, sheetName);
     
-    sheet.clearContents();
-    sheet.getRange(1, 1, out.length, out[0].length).setValues(out);
+    // Only clear the columns we're writing (columns 1 to out[0].length)
+    const numCols = out[0].length;
+    const maxRows = Math.max(sheet.getMaxRows(), out.length);
+    sheet.getRange(1, 1, maxRows, numCols).clearContent();
+    
+    sheet.getRange(1, 1, out.length, numCols).setValues(out);
     
     // Format columns
     if (out.length > 1) {
@@ -355,8 +361,8 @@ function importBobDataSimpleWithLookup() {
       sheet.getRange(2, idxBasePay + 1, numRows, 1).setNumberFormat("#,##0.00");
     }
     
-    sheet.autoResizeColumns(1, out[0].length);
-    Logger.log(`Successfully imported ${sheetName}`);
+    sheet.autoResizeColumns(1, numCols);
+    Logger.log(`Successfully imported ${sheetName} (preserved custom columns beyond column ${numCols})`);
     
   } catch (error) {
     Logger.log(`Error in importBobDataSimpleWithLookup: ${error.message}`);
@@ -427,11 +433,16 @@ function importBobBonusHistoryLatest() {
                 isFinite(amtVal) ? amtVal : "", curr]);
     });
   
-    // Write to sheet
+    // Write to sheet (preserve custom columns)
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const sheet = getOrCreateSheet(ss, targetSheetName);
-    sheet.clearContents();
-    sheet.getRange(1, 1, out.length, out[0].length).setValues(out);
+    
+    // Only clear the columns we're writing
+    const numCols = out[0].length;
+    const maxRows = Math.max(sheet.getMaxRows(), out.length);
+    sheet.getRange(1, 1, maxRows, numCols).clearContent();
+    
+    sheet.getRange(1, 1, out.length, numCols).setValues(out);
     
     if (out.length > 1) {
       const numRows = out.length - 1;
@@ -440,8 +451,8 @@ function importBobBonusHistoryLatest() {
       sheet.getRange(2, 6, numRows, 1).setNumberFormat("#,##0.00"); // Amount
     }
     
-    sheet.autoResizeColumns(1, out[0].length);
-    Logger.log(`Successfully imported ${targetSheetName}`);
+    sheet.autoResizeColumns(1, numCols);
+    Logger.log(`Successfully imported ${targetSheetName} (preserved custom columns beyond column ${numCols})`);
     
   } catch (error) {
     Logger.log(`Error in importBobBonusHistoryLatest: ${error.message}`);
@@ -507,11 +518,16 @@ function importBobCompHistoryLatest() {
       out.push([empId, name, effDate, isFinite(base) ? base : "", curr, reason]);
     });
   
-    // Write to sheet
+    // Write to sheet (preserve custom columns)
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const sheet = getOrCreateSheet(ss, targetSheetName);
-    sheet.clearContents();
-    sheet.getRange(1, 1, out.length, out[0].length).setValues(out);
+    
+    // Only clear the columns we're writing
+    const numCols = out[0].length;
+    const maxRows = Math.max(sheet.getMaxRows(), out.length);
+    sheet.getRange(1, 1, maxRows, numCols).clearContent();
+    
+    sheet.getRange(1, 1, out.length, numCols).setValues(out);
     
     if (out.length > 1) {
       const numRows = out.length - 1;
@@ -519,12 +535,68 @@ function importBobCompHistoryLatest() {
       sheet.getRange(2, 4, numRows, 1).setNumberFormat("#,##0.00"); // Salary
     }
     
-    sheet.autoResizeColumns(1, out[0].length);
-    Logger.log(`Successfully imported ${targetSheetName}`);
+    sheet.autoResizeColumns(1, numCols);
+    Logger.log(`Successfully imported ${targetSheetName} (preserved custom columns beyond column ${numCols})`);
     
   } catch (error) {
     Logger.log(`Error in importBobCompHistoryLatest: ${error.message}`);
     SpreadsheetApp.getUi().alert(`Error importing Comp History: ${error.message}`);
+    throw error;
+  }
+}
+
+/**
+ * Imports Performance Ratings report from HiBob
+ * Report ID: 31172066
+ * Preserves all columns as-is from the report
+ */
+function importBobPerformanceRatings() {
+  try {
+    const reportId = BOB_REPORT_IDS.PERF_RATINGS;
+    const targetSheetName = SHEET_NAMES.PERF_RATINGS;
+    
+    Logger.log(`Starting import of ${targetSheetName}...`);
+    
+    const rows = fetchBobReport(reportId);
+    
+    if (!rows || rows.length === 0) {
+      throw new Error("No data returned from Performance Ratings report");
+    }
+    
+    // Use the header from the report as-is
+    const header = rows[0];
+    
+    // Import all rows without transformation
+    const out = [header];
+    for (let r = 1; r < rows.length; r++) {
+      const row = rows[r];
+      if (row && row.length > 0) {
+        out.push(row);
+      }
+    }
+    
+    // Write to sheet (preserve custom columns)
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = getOrCreateSheet(ss, targetSheetName);
+    
+    // Only clear the columns we're writing
+    const numCols = out[0].length;
+    const maxRows = Math.max(sheet.getMaxRows(), out.length);
+    sheet.getRange(1, 1, maxRows, numCols).clearContent();
+    
+    sheet.getRange(1, 1, out.length, numCols).setValues(out);
+    
+    // Auto-resize and format header
+    sheet.getRange(1, 1, 1, numCols).setFontWeight('bold');
+    sheet.setFrozenRows(1);
+    sheet.autoResizeColumns(1, numCols);
+    
+    Logger.log(`Successfully imported ${targetSheetName} - ${out.length - 1} rows (preserved custom columns beyond column ${numCols})`);
+    SpreadsheetApp.getActive().toast(`Imported ${out.length - 1} performance rating records`, targetSheetName, 5);
+    
+  } catch (error) {
+    Logger.log(`Error in importBobPerformanceRatings: ${error.message}`);
+    SpreadsheetApp.getUi().alert(`Error importing Performance Ratings: ${error.message}`);
     throw error;
   }
 }
@@ -1065,26 +1137,96 @@ function clearAllCaches_() {
  * Exporter + Utilities (no hardcoded exec descriptions)
  ********************************/
 
+/**
+ * Reads Aon Code → Job Family mapping from Lookup sheet
+ * Also falls back to Job family Descriptions sheet for backward compatibility
+ */
 function _getExecDescMap_() {
   const cacheKey = 'MAP:EXEC_DESC';
   const cached = _cacheGet_(cacheKey);
   if (cached) return new Map(cached);
+  
   const ss = SpreadsheetApp.getActive();
-  const sh = ss.getSheetByName('Job family Descriptions');
   const map = new Map();
-  if (sh) {
-    const vals = sh.getDataRange().getValues();
-    if (vals.length > 1) {
-      const head = vals[0].map(h => String(h || '').trim());
-      const iCode = head.findIndex(h => /^(Aon\s*Code|Job\s*Code)$/i.test(h));
-      const iDesc = head.findIndex(h => /Job\s*Family\s*\(Exec\s*Description\)/i.test(h));
-      for (let r=1; r<vals.length; r++) {
-        const code = iCode>=0 ? String(vals[r][iCode]||'').trim() : '';
-        const desc = iDesc>=0 ? String(vals[r][iDesc]||'').trim() : '';
-        if (code && desc) map.set(code, desc);
+  
+  // Try reading from Lookup sheet first (new format)
+  const lookupSh = ss.getSheetByName('Lookup');
+  if (lookupSh) {
+    const vals = lookupSh.getDataRange().getValues();
+    for (let r = 0; r < vals.length; r++) {
+      // Look for rows with Aon Code in column A
+      const row = vals[r];
+      if (!row || row.length < 2) continue;
+      
+      const col1 = String(row[0] || '').trim();
+      const col2 = String(row[1] || '').trim();
+      const col3 = row.length > 2 ? String(row[2] || '').trim() : '';
+      
+      // Skip header rows
+      if (col1 === 'Aon Code' || col1 === 'CIQ Level' || col1 === 'Region') continue;
+      
+      // If column 1 looks like an Aon code (contains dot), map it
+      if (col1 && col1.includes('.') && col2) {
+        map.set(col1, col2);
       }
     }
   }
+  
+  // Fall back to Job family Descriptions sheet if Lookup doesn't have mappings
+  if (map.size === 0) {
+    const sh = ss.getSheetByName('Job family Descriptions');
+    if (sh) {
+      const vals = sh.getDataRange().getValues();
+      if (vals.length > 1) {
+        const head = vals[0].map(h => String(h || '').trim());
+        const iCode = head.findIndex(h => /^(Aon\s*Code|Job\s*Code)$/i.test(h));
+        const iDesc = head.findIndex(h => /Job\s*Family\s*\(Exec\s*Description\)/i.test(h));
+        for (let r=1; r<vals.length; r++) {
+          const code = iCode>=0 ? String(vals[r][iCode]||'').trim() : '';
+          const desc = iDesc>=0 ? String(vals[r][iDesc]||'').trim() : '';
+          if (code && desc) map.set(code, desc);
+        }
+      }
+    }
+  }
+  
+  _cachePut_(cacheKey, Array.from(map.entries()), CACHE_TTL);
+  return map;
+}
+
+/**
+ * Reads Aon Code → Category mapping from Lookup sheet
+ * Returns Map: Aon Code → 'X0' or 'Y1'
+ */
+function _getCategoryMap_() {
+  const cacheKey = 'MAP:CATEGORY';
+  const cached = _cacheGet_(cacheKey);
+  if (cached) return new Map(cached);
+  
+  const ss = SpreadsheetApp.getActive();
+  const map = new Map();
+  
+  // Read from Lookup sheet
+  const lookupSh = ss.getSheetByName('Lookup');
+  if (lookupSh) {
+    const vals = lookupSh.getDataRange().getValues();
+    for (let r = 0; r < vals.length; r++) {
+      const row = vals[r];
+      if (!row || row.length < 3) continue;
+      
+      const col1 = String(row[0] || '').trim();
+      const col3 = String(row[2] || '').trim().toUpperCase();
+      
+      // Skip header rows
+      if (col1 === 'Aon Code' || col1 === 'Category') continue;
+      
+      // If column 1 is an Aon code and column 3 is X0/Y1
+      if (col1 && col1.includes('.') && (col3 === 'X0' || col3 === 'Y1')) {
+        map.set(col1, col3);
+      }
+    }
+  }
+  
   _cachePut_(cacheKey, Array.from(map.entries()), CACHE_TTL);
   return map;
 }
@@ -1911,10 +2053,23 @@ function _isEngineeringOrAllowedTE_(familyOrCode) {
   return false;
 }
 
-function _effectiveCategoryForFamily_(category, familyOrCode) {
-  // Simplified: Only X0 (Engineering/Product) or Y1 (Everyone Else)
-  // X0 is only for Engineering and allowed TE families
-  if (_isEngineeringOrAllowedTE_(familyOrCode)) {
+/**
+ * Determines category (X0 or Y1) for a given Aon code or family
+ * Reads from Lookup sheet Category mapping
+ * Falls back to legacy logic if not found
+ */
+function _effectiveCategoryForFamily_(familyOrCode) {
+  const code = String(familyOrCode || '').trim();
+  if (!code) return 'Y1';
+  
+  // Try reading from Lookup sheet category mapping
+  const categoryMap = _getCategoryMap_();
+  if (categoryMap.has(code)) {
+    return categoryMap.get(code);
+  }
+  
+  // Fall back to legacy logic: X0 for Engineering/Product, Y1 for others
+  if (_isEngineeringOrAllowedTE_(code)) {
     return 'X0';
   }
   return 'Y1';
@@ -2444,7 +2599,8 @@ function createEmployeesMappedSheet_() {
 }
 
 /**
- * Creates Lookup sheet with level mapping and FX rates
+ * Creates comprehensive Lookup sheet with all mappings
+ * Single source of truth for: Level mapping, Category assignment, FX rates
  */
 function createLookupSheet_() {
   const ss = SpreadsheetApp.getActive();
@@ -2452,44 +2608,139 @@ function createLookupSheet_() {
   if (!sh) {
     sh = ss.insertSheet('Lookup');
   }
-  if (sh.getLastRow() === 0) {
-    // Headers
-    sh.getRange(1,1,1,6).setValues([[ 
-      'CIQ Level', 
-      'Aon Level Base',
-      'Region',
-      'FX Rate',
-      'Site',
-      'Region Map'
-    ]]);
-    sh.setFrozenRows(1);
-    sh.getRange(1,1,1,6).setFontWeight('bold');
+  
+  // Clear existing content
+  sh.clearContents();
+  
+  // === SECTION 1: CIQ LEVEL → AON LEVEL MAPPING ===
+  let currentRow = 1;
+  sh.getRange(currentRow, 1, 1, 2).setValues([['CIQ Level', 'Aon Level']]);
+  sh.getRange(currentRow, 1, 1, 2).setFontWeight('bold').setBackground('#4A148C').setFontColor('#FFFFFF');
+  currentRow++;
+  
+  const levelData = [
+    ['L2 IC', 'P2'],
+    ['L3 IC', 'P3'],
+    ['L4 IC', 'P4'],
+    ['L5 IC', 'P5'],
+    ['L5.5 IC', 'Avg of P5 and P6'],
+    ['L6 IC', 'P6'],
+    ['L6.5 IC', 'Avg of P6 and E1'],
+    ['L7 IC', 'E1'],
+    ['L4 Mgr', 'M3'],
+    ['L5 Mgr', 'M4'],
+    ['L5.5 Mgr', 'Avg of M4 and M5'],
+    ['L6 Mgr', 'M5'],
+    ['L6.5 Mgr', 'M6'],
+    ['L7 Mgr', 'E1'],
+    ['L8 Mgr', 'E3'],
+    ['L9 Mgr', 'E5'],
+    ['L10 Mgr', 'E6']
+  ];
+  sh.getRange(currentRow, 1, levelData.length, 2).setValues(levelData);
+  currentRow += levelData.length + 2;
+  
+  // === SECTION 2: REGION/SITE → FX MAPPING ===
+  sh.getRange(currentRow, 1, 1, 3).setValues([['Region', 'Site', 'FX Rate']]);
+  sh.getRange(currentRow, 1, 1, 3).setFontWeight('bold').setBackground('#1565C0').setFontColor('#FFFFFF');
+  currentRow++;
+  
+  const fxData = [
+    ['India', 'India', 0.0125],
+    ['USA', 'US', 1],
+    ['UK', 'UK', 1.37]
+  ];
+  sh.getRange(currentRow, 1, fxData.length, 3).setValues(fxData);
+  currentRow += fxData.length + 2;
+  
+  // === SECTION 3: AON CODE → JOB FAMILY + CATEGORY MAPPING ===
+  sh.getRange(currentRow, 1, 1, 3).setValues([['Aon Code', 'Job Family (Exec Description)', 'Category']]);
+  sh.getRange(currentRow, 1, 1, 3).setFontWeight('bold').setBackground('#2E7D32').setFontColor('#FFFFFF');
+  currentRow++;
+  
+  const categoryData = [
+    // X0 CATEGORIES (Engineering & Product)
+    ['EN.SOML', 'Engineering - ML', 'X0'],
+    ['EN.AIML', 'Engineering - ML', 'X0'],
+    ['EN.PGPG', 'Engineering - Product Management/ TPM', 'X0'],
+    ['EN.SODE', 'Engineering - Software Development', 'X0'],
+    ['EN.UUUD', 'Engineering - Product Design', 'X0'],
+    ['EN.0000', 'Engineering - CTO', 'X0'],
+    ['EN.GLCC', 'Engineering - CTO', 'X0'],
+    ['EN.PGHC', 'Engineering - CPO (Product Leadership)', 'X0'],
+    ['EN.SDCD', 'Engineering - System Design & Cloud Architecture', 'X0'],
+    ['TE.DADS', 'Data - Data Science', 'X0'],
+    ['TE.DABD', 'Data - Big Data Engineering', 'X0'],
+    ['EN.DVEX', 'Engineering - Architect / Distinguished Engineer', 'X0'],
+    ['EN.DVDE', 'Engineering - Architect', 'X0'],
     
-    // Level mapping data
-    const levelData = [
-      ['L2 IC', '2', '', '', '', ''],
-      ['L3 IC', '3', '', '', '', ''],
-      ['L4 IC', '4', '', '', '', ''],
-      ['L5 IC', '5', '', '', '', ''],
-      ['L5.5 IC', '5.5', '', '', '', ''],
-      ['L6 IC', '6', '', '', '', ''],
-      ['L6.5 IC', '6.5', '', '', '', ''],
-      ['L7 IC', '7', '', '', '', ''],
-      ['L4 Mgr', '4', '', '', '', ''],
-      ['L5 Mgr', '5', '', '', '', ''],
-      ['L5.5 Mgr', '5.5', '', '', '', ''],
-      ['L6 Mgr', '6', '', '', '', ''],
-      ['L6.5 Mgr', '6.5', '', '', '', ''],
-      ['L7 Mgr', '7', '', '', '', ''],
-      ['L8 Mgr', '8', '', '', '', ''],
-      ['L9 Mgr', '9', '', '', '', ''],
-      ['', '', 'US', '1.0', '', ''],
-      ['', '', 'UK', '1.37', '', ''],
-      ['', '', 'India', '0.0125', '', '']
-    ];
-    sh.getRange(2,1,levelData.length,6).setValues(levelData);
-    sh.autoResizeColumns(1,6);
-  }
+    // Y1 CATEGORIES (Everyone Else)
+    ['LE.GLEC', 'CEO', 'Y1'],
+    ['CB.0000', 'Corporate - Executive Assistant', 'Y1'],
+    ['CB.ADEA', 'Corporate - Executive Assistant', 'Y1'],
+    ['CB.ADCE', 'Leadership - Executive Assistant', 'Y1'],
+    ['SP.SPMF', 'Corporate - Strategic Planning (Sr. Leadership)', 'Y1'],
+    ['SP.BOBI', 'Corporate : Business Intelligence', 'Y1'],
+    ['CS.CSAS', 'Customer Support - Account Services', 'Y1'],
+    ['CS.GLTC', 'Customer Support - CCO', 'Y1'],
+    ['CS.RSTS', 'Customer Support - Tech Support', 'Y1'],
+    ['CS.CSCX', 'Customer Support - Tech Support (Leadership)', 'Y1'],
+    ['TE.DADA', 'Data - Analysis & Insights', 'Y1'],
+    ['EN.DODO', 'Engineering - DevOps', 'Y1'],
+    ['TE.INMF', 'Engineering - DevOps & Infrastructure (Leadership)', 'Y1'],
+    ['EN.PMPD', 'Engineering - Agile/Project Management', 'Y1'],
+    ['FI.ACRR', 'Finance - Accounting - Revenue', 'Y1'],
+    ['FI.GLFI', 'Finance - CFO', 'Y1'],
+    ['FI.ACCO', 'Finance - Controller', 'Y1'],
+    ['FI.CNCE', 'Finance - Controller (Leadership)', 'Y1'],
+    ['FI.ACFP', 'Finance - FP&A', 'Y1'],
+    ['FI.ACGA', 'Finance - General Accounting', 'Y1'],
+    ['FI.OPMF', 'Finance - Multi Focus (Leadership)', 'Y1'],
+    ['FI.GLFE', 'Finance - Multi Focus (Senior Leadership)', 'Y1'],
+    ['HR.GLBP', 'HR - Business Partner', 'Y1'],
+    ['HR.GLGL', 'HR - Generalist (BP + TA)', 'Y1'],
+    ['HR.ARIS', 'HR - HRIS Administrator/People Operations', 'Y1'],
+    ['HR.GLMF', 'HR - Leadership/CHRO', 'Y1'],
+    ['HR.SSHR', 'HR - Specialist/Shared Services', 'Y1'],
+    ['HR.GL00', 'HR - Strategy (Multi Focus)', 'Y1'],
+    ['HR.TMTA', 'HR - Talent Acquisition', 'Y1'],
+    ['HR.TATA', 'HR - Talent Acquisition', 'Y1'],
+    ['CB.ADAA', 'HR - Workplace Services', 'Y1'],
+    ['CB.ASAS', 'HR - Workplace Services', 'Y1'],
+    ['LG.GLMF', 'Legal - General Counsel', 'Y1'],
+    ['SP.BDBD', 'Marketing - Business Development', 'Y1'],
+    ['MK.GLHD', 'Marketing - CMO', 'Y1'],
+    ['MK.PIMC', 'Marketing - Communications', 'Y1'],
+    ['MK.PIDG', 'Marketing - Demand Generation', 'Y1'],
+    ['MK.APES', 'Marketing - Events', 'Y1'],
+    ['MK.CIDB', 'Marketing - Graphic/Web Design', 'Y1'],
+    ['MK.PIPM', 'Marketing - Product Marketing', 'Y1'],
+    ['MK.PMME', 'Marketing - Product Marketing Leadership', 'Y1'],
+    ['SA.GL00', 'Sales - C- Level Leadership', 'Y1'],
+    ['SA.CRCS', 'Sales - Customer Success', 'Y1'],
+    ['SA.CRCE', 'Sales - Customer Success - Sr. Leadership', 'Y1'],
+    ['SA.OPDD', 'Sales - Deal Desk', 'Y1'],
+    ['SA.FSDS', 'Sales - Direct Sales', 'Y1'],
+    ['SA.OPSE', 'Sales - Enablement', 'Y1'],
+    ['SA.GLMF', 'Sales - Leadership', 'Y1'],
+    ['SA.OPSO', 'Sales - Operations & Enablement', 'Y1'],
+    ['SA.OPSV', 'Sales - Operations Leadership', 'Y1'],
+    ['SA.APMF', 'Sales - Partnerships (Leadership)', 'Y1'],
+    ['SA.GLSX', 'Sales - Regional Leadership', 'Y1'],
+    ['SA.OPSR', 'Sales - Salesforce Administrator', 'Y1'],
+    ['SA.FAF1', 'Sales - Senior & Strategic Accounts Executives', 'Y1'],
+    ['SA.ASSN', 'Sales - Solutions Consulting (Bonus)', 'Y1'],
+    ['SA.ASRS', 'Sales - Solutions Consulting (Commissions)', 'Y1'],
+    ['SA.ASME', 'Sales - Solutions Consulting (Leadership)', 'Y1'],
+    ['SA.0000', 'Sales - Sr. Leadership', 'Y1']
+  ];
+  sh.getRange(currentRow, 1, categoryData.length, 3).setValues(categoryData);
+  
+  // Format and freeze
+  sh.setFrozenRows(1);
+  sh.autoResizeColumns(1, 3);
+  
+  SpreadsheetApp.getActive().toast('Lookup sheet created with comprehensive mappings', 'Done', 5);
 }
 
 /**
@@ -2945,6 +3196,7 @@ function importBobData() {
     '✓ Base Data (employees)\n' +
     '✓ Bonus History (latest per employee)\n' +
     '✓ Comp History (latest per employee)\n' +
+    '✓ Performance Ratings (latest ratings)\n' +
     '✓ Auto-sync Employees Mapped sheet\n' +
     '✓ Auto-sync Title Mapping sheet\n\n' +
     'Prerequisites:\n' +
@@ -2960,27 +3212,32 @@ function importBobData() {
   
   try {
     // Step 1: Import Base Data
-    SpreadsheetApp.getActive().toast('⏳ Step 1/5: Importing Base Data...', 'Import Bob Data', 3);
+    SpreadsheetApp.getActive().toast('⏳ Step 1/6: Importing Base Data...', 'Import Bob Data', 3);
     importBobDataSimpleWithLookup();
     Utilities.sleep(1000);
     
     // Step 2: Import Bonus History
-    SpreadsheetApp.getActive().toast('⏳ Step 2/5: Importing Bonus History...', 'Import Bob Data', 3);
+    SpreadsheetApp.getActive().toast('⏳ Step 2/6: Importing Bonus History...', 'Import Bob Data', 3);
     importBobBonusHistoryLatest();
     Utilities.sleep(1000);
     
     // Step 3: Import Comp History
-    SpreadsheetApp.getActive().toast('⏳ Step 3/5: Importing Comp History...', 'Import Bob Data', 3);
+    SpreadsheetApp.getActive().toast('⏳ Step 3/6: Importing Comp History...', 'Import Bob Data', 3);
     importBobCompHistoryLatest();
     Utilities.sleep(1000);
     
-    // Step 4: Sync Employees Mapped sheet
-    SpreadsheetApp.getActive().toast('⏳ Step 4/5: Syncing Employees Mapped sheet...', 'Import Bob Data', 3);
+    // Step 4: Import Performance Ratings
+    SpreadsheetApp.getActive().toast('⏳ Step 4/6: Importing Performance Ratings...', 'Import Bob Data', 3);
+    importBobPerformanceRatings();
+    Utilities.sleep(1000);
+    
+    // Step 5: Sync Employees Mapped sheet
+    SpreadsheetApp.getActive().toast('⏳ Step 5/6: Syncing Employees Mapped sheet...', 'Import Bob Data', 3);
     syncEmployeesMappedSheet_();
     Utilities.sleep(500);
     
-    // Step 5: Sync Title Mapping
-    SpreadsheetApp.getActive().toast('⏳ Step 5/5: Syncing Title Mapping...', 'Import Bob Data', 3);
+    // Step 6: Sync Title Mapping
+    SpreadsheetApp.getActive().toast('⏳ Step 6/6: Syncing Title Mapping...', 'Import Bob Data', 3);
     syncTitleMapping_();
     
     // Success
