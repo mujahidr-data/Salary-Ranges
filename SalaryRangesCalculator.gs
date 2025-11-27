@@ -1877,15 +1877,54 @@ function ensureRegionPicker_() {
   if (!v) cell.setValue('US');
 }
 
+/**
+ * Creates Job Family dropdown from Lookup sheet
+ * Reads from Section 3 (Aon Code → Job Family mapping)
+ */
 function ensureExecFamilyPicker_() {
   const ss = SpreadsheetApp.getActive();
   const sh = uiSheet_(); if (!sh) return;
-  const mapSh = ss.getSheetByName('Job family Descriptions'); if (!mapSh) return;
-  const last = mapSh.getLastRow(); if (last <= 1) return;
-  const vals = mapSh.getRange(2,2,last-1,1).getValues().map(r => String(r[0]||'').trim()).filter(Boolean);
-  const uniq = Array.from(new Set(vals)).sort();
+  
+  // Try reading from Lookup sheet first (new format)
+  let families = [];
+  const lookupSh = ss.getSheetByName('Lookup');
+  if (lookupSh) {
+    const vals = lookupSh.getDataRange().getValues();
+    for (let r = 0; r < vals.length; r++) {
+      const row = vals[r];
+      if (!row || row.length < 2) continue;
+      
+      const col1 = String(row[0] || '').trim();
+      const col2 = String(row[1] || '').trim();
+      
+      // Skip header rows
+      if (col1 === 'Aon Code' || col1 === 'CIQ Level' || col1 === 'Region') continue;
+      
+      // If column 1 is an Aon code (contains dot) and column 2 has job family
+      if (col1 && col1.includes('.') && col2) {
+        families.push(col2);
+      }
+    }
+  }
+  
+  // Fall back to Job family Descriptions sheet if Lookup doesn't have data
+  if (families.length === 0) {
+    const mapSh = ss.getSheetByName('Job family Descriptions');
+    if (mapSh && mapSh.getLastRow() > 1) {
+      const vals = mapSh.getRange(2, 2, mapSh.getLastRow() - 1, 1).getValues();
+      families = vals.map(r => String(r[0] || '').trim()).filter(Boolean);
+    }
+  }
+  
+  if (families.length === 0) return; // No data found
+  
+  // Create dropdown with unique sorted values
+  const uniq = Array.from(new Set(families)).sort();
   const cell = sh.getRange('B2');
-  const rule = SpreadsheetApp.newDataValidation().requireValueInList(uniq, true).setAllowInvalid(false).build();
+  const rule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(uniq, true)
+    .setAllowInvalid(false)
+    .build();
   cell.setDataValidation(rule);
 }
 
