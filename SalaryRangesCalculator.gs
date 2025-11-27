@@ -14,20 +14,19 @@
  * - Persistent legacy mapping storage
  * - Interactive calculator UI
  * 
- * @version 4.9.0
+ * @version 4.9.1
  * @date 2025-11-27
- * @changelog v4.9.0 - FEATURE: Market Data Missing detection in Employees Mapped
+ * @changelog v4.9.1 - FIX: .5 level progression when upper level is blank
+ *   - Issue: L5.5 IC = L5 IC (no progression) when L6 IC is blank
+ *   - Fix: L5.5 IC = L5 IC × 1.2 (20% uplift) when L6 IC is blank
+ *   - Applies to all .5 levels: L5.5 IC, L6.5 IC, L5.5 Mgr, L6.5 Mgr
+ *   - Ensures career progression even when upper level data is missing
+ *   - If both levels exist: averages them (unchanged)
+ *   - If only lower exists: applies 1.2x multiplier (NEW)
+ *   - If only upper exists: uses upper value (unchanged)
+ *   - Logging: "🔼 Applied 1.2x to L5.5 IC: L5 IC × 1.2 → P25=X"
+ * @previous v4.9.0 - FEATURE: Market Data Missing detection in Employees Mapped
  *   - New column P: "Market Data Missing" flags employees with no Aon data
- *   - Checks during Import Bob Data: region + job family + level
- *   - Shows: "No US data", "No India data", "No UK data" (or blank if data exists)
- *   - Red highlighting: Easy to spot employees needing attention
- *   - Summary in toast: "🔴 Missing Market Data: X employees"
- *   - Checks both direct data AND rollup data before flagging
- *   - Example: Employee in US with CS.RSTS at L4 IC → checks CS.RSTS.P4 and CS.RSTS.R4
- *   - Helps identify: New job families, rare levels, regional gaps
- *   - Action: Add rollup codes or direct codes to Aon sheets for flagged employees
- * @previous v4.8.0 - FEATURE: Rollup data fallback for missing market data
- *   - Automatic rollup code fallback: .R3, .R4, .R5, etc.
  *   - Fixed misleading "0 new mappings" message when updating existing mappings
  *   - Now shows: "X updated, Y new" instead of just "Y new"
  *   - Added change detection: Only updates if Aon Code or Level actually changed
@@ -5314,12 +5313,15 @@ function rebuildFullListAllCombinations_() {
           const upperPct = aonCache.get(upperKey) || {};
           
           // Average each percentile
+          // If both exist: average them
+          // If only preceding exists: apply 1.2x multiplier for progression
+          // If only succeeding exists: use it as-is
           const avg = (a, b) => {
             const numA = toNumber(a);
             const numB = toNumber(b);
-            if (numA && numB) return (numA + numB) / 2;
-            if (numA) return numA;
-            if (numB) return numB;
+            if (numA && numB) return (numA + numB) / 2;  // Both: average
+            if (numA) return numA * 1.2;  // Only preceding: 20% uplift
+            if (numB) return numB;  // Only succeeding: use as-is
             return '';
           };
           
@@ -5333,8 +5335,14 @@ function rebuildFullListAllCombinations_() {
             p90: avg(lowerPct.p90, upperPct.p90)
           };
           
+          // Log first 20 .5 level calculations for debugging
           if (totalCombinations <= 20 && ciqLevel.includes('.5')) {
-            Logger.log(`Averaged ${ciqLevel}: ${lowerLevel} + ${upperLevel} → P25=${percentiles.p25}, P625=${percentiles.p625}`);
+            const hasUpper = toNumber(upperPct.p25) || toNumber(upperPct.p625);
+            if (hasUpper) {
+              Logger.log(`Averaged ${ciqLevel}: ${lowerLevel} + ${upperLevel} → P25=${percentiles.p25}, P625=${percentiles.p625}`);
+            } else {
+              Logger.log(`🔼 Applied 1.2x to ${ciqLevel}: ${lowerLevel} × 1.2 → P25=${percentiles.p25}, P625=${percentiles.p625}`);
+            }
           }
         }
         
