@@ -3602,6 +3602,7 @@ function syncEmployeesMappedSheet_() {
   const iTitle = baseHead.findIndex(h => /Job.*title/i.test(h));
   const iDept = baseHead.findIndex(h => /Department/i.test(h));
   const iSite = baseHead.findIndex(h => /^Site$/i.test(h));
+  const iJobLevel = baseHead.findIndex(h => /Job.*level/i.test(h));
   const iSalary = baseHead.findIndex(h => /Base.*salary/i.test(h));
   const iStart = baseHead.findIndex(h => /Start.*date/i.test(h));
   const iActive = baseHead.findIndex(h => /Active.*Inactive|Status/i.test(h));
@@ -3704,6 +3705,7 @@ function syncEmployeesMappedSheet_() {
     const title = iTitle >= 0 ? String(row[iTitle] || '') : '';
     const dept = iDept >= 0 ? String(row[iDept] || '') : '';
     const site = iSite >= 0 ? String(row[iSite] || '') : '';
+    const jobLevelFromBob = iJobLevel >= 0 ? String(row[iJobLevel] || '').trim() : '';
     const salary = iSalary >= 0 ? row[iSalary] : '';
     const startDate = iStart >= 0 ? row[iStart] : '';
     
@@ -3752,11 +3754,18 @@ function syncEmployeesMappedSheet_() {
       }
       // No mapping found
       else {
+        // Use Job Level from Bob Base Data even if unmapped
+        ciqLevel = jobLevelFromBob || '';
         confidence = '0%';
         source = 'Unmapped';
         status = 'Needs Review';
         needsReviewCount++;
       }
+    }
+    
+    // If still no level, use Job Level from Bob Base Data as fallback
+    if (!ciqLevel && jobLevelFromBob) {
+      ciqLevel = jobLevelFromBob;
     }
     
     // Get Job Family Description
