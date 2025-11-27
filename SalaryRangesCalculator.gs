@@ -1820,6 +1820,7 @@ function createAonPlaceholderSheets_() {
     'Job Family',
     'Market \n\n (43) CFY Fixed Pay: 10th Percentile',
     'Market \n\n (43) CFY Fixed Pay: 25th Percentile',
+    'Market \n\n (43) CFY Fixed Pay: 40th Percentile',
     'Market \n\n (43) CFY Fixed Pay: 50th Percentile',
     'Market \n\n (43) CFY Fixed Pay: 62.5th Percentile',
     'Market \n\n (43) CFY Fixed Pay: 75th Percentile',
