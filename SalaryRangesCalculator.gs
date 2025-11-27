@@ -722,15 +722,16 @@ function getAonValueStrictByHeader_(sheet, fam, targetNum, prefLetter, ciqBaseLe
 }
 
 /********************************
- * Robust header regexes
+ * Robust header regexes - Updated to handle newlines in Aon headers
+ * Aon reports have headers like: "Market \n\n (43) CFY Fixed Pay: 10th Percentile"
  ********************************/
-const HDR_P10  = '(?:^\\s*Market\\s*\\(43\\)\\s*CFY\\s*Fixed\\s*Pay:\\s*10(?:th)?\\s*Percentile\\s*$|^\\s*10(?:th)?\\s*Percentile\\s*$|^\\s*P\\s*10\\s*$)';
-const HDR_P25  = '(?:^\\s*Market\\s*\\(43\\)\\s*CFY\\s*Fixed\\s*Pay:\\s*25(?:th)?\\s*Percentile\\s*$|^\\s*25(?:th)?\\s*Percentile\\s*$|^\\s*P\\s*25\\s*$)';
-const HDR_P40  = '(?:^\\s*Market\\s*\\(43\\)\\s*CFY\\s*Fixed\\s*Pay:\\s*40(?:th)?\\s*Percentile\\s*$|^\\s*40(?:th)?\\s*Percentile\\s*$|^\\s*P\\s*40\\s*$)';
-const HDR_P50  = '(?:^\\s*Market\\s*\\(43\\)\\s*CFY\\s*Fixed\\s*Pay:\\s*50(?:th)?\\s*Percentile\\s*$|^\\s*50(?:th)?\\s*Percentile\\s*$|^\\s*P\\s*50\\s*$)';
-const HDR_P625 = '(?:^\\s*Market\\s*\\(43\\)\\s*CFY\\s*Fixed\\s*Pay:\\s*62(?:[\\.,])?5(?:th)?\\s*Percentile\\s*$|^\\s*62(?:[\\.,])?5(?:th)?\\s*Percentile\\s*$|^\\s*P\\s*62(?:[\\.,])?5\\s*$)';
-const HDR_P75  = '(?:^\\s*Market\\s*\\(43\\)\\s*CFY\\s*Fixed\\s*Pay:\\s*75(?:th)?\\s*Percentile\\s*$|^\\s*75(?:th)?\\s*Percentile\\s*$|^\\s*P\\s*75\\s*$)';
-const HDR_P90  = '(?:^\\s*Market\\s*\\(43\\)\\s*CFY\\s*Fixed\\s*Pay:\\s*90(?:th)?\\s*Percentile\\s*$|^\\s*90(?:th)?\\s*Percentile\\s*$|^\\s*P\\s*90\\s*$)';
+const HDR_P10  = 'Market[\\s\\n]*(\\(43\\))?[\\s\\n]*CFY[\\s\\n]*Fixed[\\s\\n]*Pay:[\\s\\n]*10(?:th)?[\\s\\n]*Percentile';
+const HDR_P25  = 'Market[\\s\\n]*(\\(43\\))?[\\s\\n]*CFY[\\s\\n]*Fixed[\\s\\n]*Pay:[\\s\\n]*25(?:th)?[\\s\\n]*Percentile';
+const HDR_P40  = 'Market[\\s\\n]*(\\(43\\))?[\\s\\n]*CFY[\\s\\n]*Fixed[\\s\\n]*Pay:[\\s\\n]*40(?:th)?[\\s\\n]*Percentile';
+const HDR_P50  = 'Market[\\s\\n]*(\\(43\\))?[\\s\\n]*CFY[\\s\\n]*Fixed[\\s\\n]*Pay:[\\s\\n]*50(?:th)?[\\s\\n]*Percentile';
+const HDR_P625 = 'Market[\\s\\n]*(\\(43\\))?[\\s\\n]*CFY[\\s\\n]*Fixed[\\s\\n]*Pay:[\\s\\n]*62\\.?5(?:th)?[\\s\\n]*Percentile';
+const HDR_P75  = 'Market[\\s\\n]*(\\(43\\))?[\\s\\n]*CFY[\\s\\n]*Fixed[\\s\\n]*Pay:[\\s\\n]*75(?:th)?[\\s\\n]*Percentile';
+const HDR_P90  = 'Market[\\s\\n]*(\\(43\\))?[\\s\\n]*CFY[\\s\\n]*Fixed[\\s\\n]*Pay:[\\s\\n]*90(?:th)?[\\s\\n]*Percentile';
 
 /********************************
  * Public custom functions
@@ -1196,13 +1197,14 @@ function rebuildFullListTabs_() {
         const headers = values[0].map(h => String(h || '').replace(/\s+/g,' ').trim());
         const colJobCode = headers.indexOf('Job Code');
         const colJobFam  = headers.indexOf('Job Family');
-        const colP10  = headers.indexOf('Market (43) CFY Fixed Pay: 10th Percentile') >= 0 ? headers.indexOf('Market (43) CFY Fixed Pay: 10th Percentile') : findHeaderIndex_(headers, '10(?:th)?\\s*Percentile|\\bP\\s*10\\b');
-        const colP25  = headers.indexOf('Market (43) CFY Fixed Pay: 25th Percentile') >= 0 ? headers.indexOf('Market (43) CFY Fixed Pay: 25th Percentile') : findHeaderIndex_(headers, '25(?:th)?\\s*Percentile|\\bP\\s*25\\b');
-        const colP40  = headers.indexOf('Market (43) CFY Fixed Pay: 40th Percentile') >= 0 ? headers.indexOf('Market (43) CFY Fixed Pay: 40th Percentile') : findHeaderIndex_(headers, '40(?:th)?\\s*Percentile|\\bP\\s*40\\b');
-        const colP50  = headers.indexOf('Market (43) CFY Fixed Pay: 50th Percentile') >= 0 ? headers.indexOf('Market (43) CFY Fixed Pay: 50th Percentile') : findHeaderIndex_(headers, '50(?:th)?\\s*Percentile|\\bP\\s*50\\b');
-        const colP625 = headers.indexOf('Market (43) CFY Fixed Pay: 62.5th Percentile') >= 0 ? headers.indexOf('Market (43) CFY Fixed Pay: 62.5th Percentile') : findHeaderIndex_(headers, '62[\\.,]?5(?:th)?\\s*Percentile|\\bP\\s*62[\\.,]?5\\b');
-        const colP75  = headers.indexOf('Market (43) CFY Fixed Pay: 75th Percentile') >= 0 ? headers.indexOf('Market (43) CFY Fixed Pay: 75th Percentile') : findHeaderIndex_(headers, '75(?:th)?\\s*Percentile|\\bP\\s*75\\b');
-        const colP90  = headers.indexOf('Market (43) CFY Fixed Pay: 90th Percentile') >= 0 ? headers.indexOf('Market (43) CFY Fixed Pay: 90th Percentile') : findHeaderIndex_(headers, '90(?:th)?\\s*Percentile|\\bP\\s*90\\b');
+        // Find columns using regex to handle newlines in headers
+        const colP10  = findHeaderIndex_(headers, HDR_P10);
+        const colP25  = findHeaderIndex_(headers, HDR_P25);
+        const colP40  = findHeaderIndex_(headers, HDR_P40);
+        const colP50  = findHeaderIndex_(headers, HDR_P50);
+        const colP625 = findHeaderIndex_(headers, HDR_P625);
+        const colP75  = findHeaderIndex_(headers, HDR_P75);
+        const colP90  = findHeaderIndex_(headers, HDR_P90);
         if (colJobCode >= 0 && colJobFam >= 0 && colP50 >= 0 && colP625 >= 0 && colP75 >= 0) {
           for (let r=1; r<values.length; r++) {
             const row = values[r]; const jc = String(row[colJobCode] || '').trim(); if (!jc) continue;
@@ -1478,11 +1480,12 @@ function createAonPlaceholderSheets_() {
   const headers = [
     'Job Code',
     'Job Family',
-    'Market (43) CFY Fixed Pay: 40th Percentile',
-    'Market (43) CFY Fixed Pay: 50th Percentile',
-    'Market (43) CFY Fixed Pay: 62.5th Percentile',
-    'Market (43) CFY Fixed Pay: 75th Percentile',
-    'Market (43) CFY Fixed Pay: 90th Percentile'
+    'Market \n\n (43) CFY Fixed Pay: 10th Percentile',
+    'Market \n\n (43) CFY Fixed Pay: 25th Percentile',
+    'Market \n\n (43) CFY Fixed Pay: 50th Percentile',
+    'Market \n\n (43) CFY Fixed Pay: 62.5th Percentile',
+    'Market \n\n (43) CFY Fixed Pay: 75th Percentile',
+    'Market \n\n (43) CFY Fixed Pay: 90th Percentile'
   ];
   targets.forEach(name => {
     let sh = ss.getSheetByName(name);
