@@ -1955,15 +1955,15 @@ function buildCalculatorUI_() {
     formulasIntMax.push([`=XLOOKUP($B$3&$B$4&$B$2&$A${aRow},'Full List'!$R:$R,'Full List'!$P:$P,"")`]);
     formulasIntCount.push([`=XLOOKUP($B$3&$B$4&$B$2&$A${aRow},'Full List'!$R:$R,'Full List'!$Q:$Q,"")`]);
     
-    // Compa Ratio columns
+    // Compa Ratio columns - Using dynamic ranges (full columns)
     // Avg CR = Average (Median / Mid-point) if data exists
-    formulasAvgCR.push([`=IFERROR(($B$5="USD", AVERAGEIFS('Employees (Mapped)'!$F2:$F$370,$B$2:$K$370,$B$2,'Employees (Mapped)'!$D2:$D$370,$A${aRow},'Employees (Mapped)'!$E2:$E$370,$B$4,'Employees (Mapped)'!$D2:$D$370,"<>","")/C${aRow}, AVERAGEIFS('Employees (Mapped)'!$F2:$F$370,'Employees (Mapped)'!$C2:$C$370,$B$2,'Employees (Mapped)'!$D2:$D$370,$A${aRow},'Employees (Mapped)'!$E2:$E$370,$B$4,'Employees (Mapped)'!$D2:$D$370,"<>","")/C${aRow}),"")`]);
+    formulasAvgCR.push([`=IFERROR(IF($B$5="USD", AVERAGEIFS('Employees (Mapped)'!$F:$F,'Employees (Mapped)'!$C:$C,$B$2,'Employees (Mapped)'!$D:$D,$A${aRow},'Employees (Mapped)'!$E:$E,$B$4,'Employees (Mapped)'!$D:$D,"<>")/C${aRow}, AVERAGEIFS('Employees (Mapped)'!$F:$F,'Employees (Mapped)'!$C:$C,$B$2,'Employees (Mapped)'!$D:$D,$A${aRow},'Employees (Mapped)'!$E:$E,$B$4,'Employees (Mapped)'!$D:$D,"<>")/C${aRow}),"")`]);
     // TT CR = Top Talent CR
-    formulasTTCR.push([`=IFERROR(IF($B$5="USD", AVERAGEIFS('Employees (Mapped)'!$F2:$F$370,'Employees (Mapped)'!$C2:$C$370,$B$2,'Employees (Mapped)'!$D2:$D$370,$A${aRow},'Employees (Mapped)'!$E2:$E$370,$B$4,'Employees (Mapped)'!$D2:$D$370,"<>")/C${aRow}, AVERAGEIFS('Employees (Mapped)'!$F2:$F$370,'Employees (Mapped)'!$C2:$C$370,$B$2,'Employees (Mapped)'!$D2:$D$370,$A${aRow},'Employees (Mapped)'!$E2:$E$370,$B$4,'Employees (Mapped)'!$D2:$D$370,"<>")/C${aRow}),"")`]);
+    formulasTTCR.push([`=IFERROR(IF($B$5="USD", AVERAGEIFS('Employees (Mapped)'!$F:$F,'Employees (Mapped)'!$C:$C,$B$2,'Employees (Mapped)'!$D:$D,$A${aRow},'Employees (Mapped)'!$E:$E,$B$4,'Employees (Mapped)'!$D:$D,"<>")/C${aRow}, AVERAGEIFS('Employees (Mapped)'!$F:$F,'Employees (Mapped)'!$C:$C,$B$2,'Employees (Mapped)'!$D:$D,$A${aRow},'Employees (Mapped)'!$E:$E,$B$4,'Employees (Mapped)'!$D:$D,"<>")/C${aRow}),"")`]);
     // New Hire CR
-    formulasNewHireCR.push([`=IFERROR(IF($B$5="USD", AVERAGEIFS('Employees (Mapped)'!$F2:$F$370,'Employees (Mapped)'!$C2:$C$370,$B$2,'Employees (Mapped)'!$D2:$D$370,$A${aRow},'Employees (Mapped)'!$E2:$E$370,$B$4,'Employees (Mapped)'!$D2:$D$370,"<>")/C${aRow}, AVERAGEIFS('Employees (Mapped)'!$F2:$F$370,'Employees (Mapped)'!$C2:$C$370,$B$2,'Employees (Mapped)'!$D2:$D$370,$A${aRow},'Employees (Mapped)'!$E2:$E$370,$B$4,'Employees (Mapped)'!$D2:$D$370,"<>")/C${aRow}),"")`]);
+    formulasNewHireCR.push([`=IFERROR(IF($B$5="USD", AVERAGEIFS('Employees (Mapped)'!$F:$F,'Employees (Mapped)'!$C:$C,$B$2,'Employees (Mapped)'!$D:$D,$A${aRow},'Employees (Mapped)'!$E:$E,$B$4,'Employees (Mapped)'!$D:$D,"<>")/C${aRow}, AVERAGEIFS('Employees (Mapped)'!$F:$F,'Employees (Mapped)'!$C:$C,$B$2,'Employees (Mapped)'!$D:$D,$A${aRow},'Employees (Mapped)'!$E:$E,$B$4,'Employees (Mapped)'!$D:$D,"<>")/C${aRow}),"")`]);
     // BT CR = Below Talent CR
-    formulasBTCR.push([`=IFERROR(IF($B$5="USD", AVERAGEIFS('Employees (Mapped)'!$F2:$F$370,'Employees (Mapped)'!$C2:$C$370,$B$2,'Employees (Mapped)'!$D2:$D$370,$A${aRow},'Employees (Mapped)'!$E2:$E$370,$B$4,'Employees (Mapped)'!$D2:$D$370,"<>")/C${aRow}, AVERAGEIFS('Employees (Mapped)'!$F2:$F$370,'Employees (Mapped)'!$C2:$C$370,$B$2,'Employees (Mapped)'!$D2:$D$370,$A${aRow},'Employees (Mapped)'!$E2:$E$370,$B$4,'Employees (Mapped)'!$D2:$D$370,"<>")/C${aRow}),"")`]);
+    formulasBTCR.push([`=IFERROR(IF($B$5="USD", AVERAGEIFS('Employees (Mapped)'!$F:$F,'Employees (Mapped)'!$C:$C,$B$2,'Employees (Mapped)'!$D:$D,$A${aRow},'Employees (Mapped)'!$E:$E,$B$4,'Employees (Mapped)'!$D:$D,"<>")/C${aRow}, AVERAGEIFS('Employees (Mapped)'!$F:$F,'Employees (Mapped)'!$C:$C,$B$2,'Employees (Mapped)'!$D:$D,$A${aRow},'Employees (Mapped)'!$E:$E,$B$4,'Employees (Mapped)'!$D:$D,"<>")/C${aRow}),"")`]);
   });
   
   // Batch set all formulas at once (single API call per column)
