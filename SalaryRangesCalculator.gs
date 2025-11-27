@@ -14,9 +14,15 @@
  * - Persistent legacy mapping storage
  * - Interactive calculator UI
  * 
- * @version 4.6.3-debug
+ * @version 4.6.4
  * @date 2025-11-27
- * @changelog v4.6.3-debug - Added comprehensive logging to diagnose internal stats issue
+ * @changelog v4.6.4 - CRITICAL HOTFIX: Fixed calculator formulas (wrong lookup column)
+ *   - Bug: Calculator formulas looking up in column U (Avg CR) instead of column Y (Key)
+ *   - Result: Range Start/Mid/End were blank, Internal Min/Med/Max/Count were blank
+ *   - Fix: Changed all XLOOKUP formulas to use 'Full List'!$Y:$Y for lookup array
+ *   - Applied to both buildCalculatorUI_() and buildCalculatorUIForY1_()
+ *   - Market range and internal stats now populate correctly in calculator
+ * @previous v4.6.3-debug - Added comprehensive logging to diagnose internal stats issue
  *   - Added logging to _buildInternalIndex_() to show columns, sample data, and keys created
  *   - Added logging to Full List generation to show lookup attempts and success rate
  *   - Shows summary: X out of Y combinations have employee data
@@ -2155,15 +2161,17 @@ function buildCalculatorUI_() {
     const aRow = 8 + i;
     
     // Market Range: Currency-aware XLOOKUP (Column N=Range Start, O=Range Mid, P=Range End)
-    formulasRangeStart.push([`=IF($B$4="Local", XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$U:$U,'Full List'!$N:$N,""), XLOOKUP($B$2&$A${aRow}&$B$3,'Full List USD'!$U:$U,'Full List USD'!$N:$N,""))`]);
-    formulasRangeMid.push([`=IF($B$4="Local", XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$U:$U,'Full List'!$O:$O,""), XLOOKUP($B$2&$A${aRow}&$B$3,'Full List USD'!$U:$U,'Full List USD'!$O:$O,""))`]);
-    formulasRangeEnd.push([`=IF($B$4="Local", XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$U:$U,'Full List'!$P:$P,""), XLOOKUP($B$2&$A${aRow}&$B$3,'Full List USD'!$U:$U,'Full List USD'!$P:$P,""))`]);
+    // FIX: KEY is in Column Y, not U!
+    formulasRangeStart.push([`=IF($B$4="Local", XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$N:$N,""), XLOOKUP($B$2&$A${aRow}&$B$3,'Full List USD'!$Y:$Y,'Full List USD'!$N:$N,""))`]);
+    formulasRangeMid.push([`=IF($B$4="Local", XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$O:$O,""), XLOOKUP($B$2&$A${aRow}&$B$3,'Full List USD'!$Y:$Y,'Full List USD'!$O:$O,""))`]);
+    formulasRangeEnd.push([`=IF($B$4="Local", XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$P:$P,""), XLOOKUP($B$2&$A${aRow}&$B$3,'Full List USD'!$Y:$Y,'Full List USD'!$P:$P,""))`]);
     
     // Internal stats (Column Q=Internal Min, R=Median, S=Max, T=Emp Count)
-    formulasIntMin.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$U:$U,'Full List'!$Q:$Q,"")`]);
-    formulasIntMed.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$U:$U,'Full List'!$R:$R,"")`]);
-    formulasIntMax.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$U:$U,'Full List'!$S:$S,"")`]);
-    formulasIntCount.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$U:$U,'Full List'!$T:$T,"")`]);
+    // FIX: KEY is in Column Y, not U!
+    formulasIntMin.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$Q:$Q,"")`]);
+    formulasIntMed.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$R:$R,"")`]);
+    formulasIntMax.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$S:$S,"")`]);
+    formulasIntCount.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$T:$T,"")`]);
     
     // Compa Ratio columns - XLOOKUP from Full List (pre-calculated)
     // Column Y = Key, Column U = Avg CR, Column V = TT CR, Column W = New Hire CR, Column X = BT CR
@@ -3949,15 +3957,17 @@ function buildCalculatorUIForY1_() {
     const aRow = 8 + i;
     
     // Market Range: Currency-aware XLOOKUP (Column N=Range Start, O=Range Mid, P=Range End)
-    formulasRangeStart.push([`=IF($B$4="Local", XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$U:$U,'Full List'!$N:$N,""), XLOOKUP($B$2&$A${aRow}&$B$3,'Full List USD'!$U:$U,'Full List USD'!$N:$N,""))`]);
-    formulasRangeMid.push([`=IF($B$4="Local", XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$U:$U,'Full List'!$O:$O,""), XLOOKUP($B$2&$A${aRow}&$B$3,'Full List USD'!$U:$U,'Full List USD'!$O:$O,""))`]);
-    formulasRangeEnd.push([`=IF($B$4="Local", XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$U:$U,'Full List'!$P:$P,""), XLOOKUP($B$2&$A${aRow}&$B$3,'Full List USD'!$U:$U,'Full List USD'!$P:$P,""))`]);
+    // FIX: KEY is in Column Y, not U!
+    formulasRangeStart.push([`=IF($B$4="Local", XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$N:$N,""), XLOOKUP($B$2&$A${aRow}&$B$3,'Full List USD'!$Y:$Y,'Full List USD'!$N:$N,""))`]);
+    formulasRangeMid.push([`=IF($B$4="Local", XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$O:$O,""), XLOOKUP($B$2&$A${aRow}&$B$3,'Full List USD'!$Y:$Y,'Full List USD'!$O:$O,""))`]);
+    formulasRangeEnd.push([`=IF($B$4="Local", XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$P:$P,""), XLOOKUP($B$2&$A${aRow}&$B$3,'Full List USD'!$Y:$Y,'Full List USD'!$P:$P,""))`]);
     
     // Internal stats (Column Q=Internal Min, R=Median, S=Max, T=Emp Count)
-    formulasIntMin.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$U:$U,'Full List'!$Q:$Q,"")`]);
-    formulasIntMed.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$U:$U,'Full List'!$R:$R,"")`]);
-    formulasIntMax.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$U:$U,'Full List'!$S:$S,"")`]);
-    formulasIntCount.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$U:$U,'Full List'!$T:$T,"")`]);
+    // FIX: KEY is in Column Y, not U!
+    formulasIntMin.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$Q:$Q,"")`]);
+    formulasIntMed.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$R:$R,"")`]);
+    formulasIntMax.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$S:$S,"")`]);
+    formulasIntCount.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$T:$T,"")`]);
     
     // CR columns - XLOOKUP from Full List (pre-calculated)
     formulasAvgCR.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$U:$U,"")`]);
