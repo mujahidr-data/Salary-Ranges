@@ -311,8 +311,7 @@ function importBobDataSimpleWithLookup() {
     const idxJobFamily   = findColumnIndex(srcHeader, ["Job Family Name"], false);
     
     let header = srcHeader.slice();
-    header = [...header, "Variable Type", "Variable %"];
-    if (idxJobFamily < 0) header.push("Job Family Name");
+    // Removed: Variable Type, Variable % (legacy columns, not used)
     
     const out = [header];
   
@@ -341,8 +340,7 @@ function importBobDataSimpleWithLookup() {
       if (!isFinite(basePayNum) || basePayNum === 0) continue;
       
       row[idxBasePay] = basePayNum;
-      row.push("", ""); // Variable Type, Variable %
-      if (idxJobFamily < 0) row.push(""); // Job Family Name placeholder
+      // Removed: Variable Type, Variable % (legacy columns)
       out.push(row);
     }
     
