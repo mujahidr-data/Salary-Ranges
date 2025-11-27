@@ -14,9 +14,15 @@
  * - Persistent legacy mapping storage
  * - Interactive calculator UI
  * 
- * @version 4.6.0
+ * @version 4.6.1
  * @date 2025-11-27
- * @changelog v4.6.0 - Massive performance optimization for Build Market Data (90% faster!)
+ * @changelog v4.6.1 - CRITICAL HOTFIX: Fixed Lookup sheet section detection
+ *   - Bug: _getExecDescMap_() was reading Level Mapping section ("L5.5 IC" → "Avg of P5 and P6")
+ *   - Bug: Full List showed wrong job families, all percentiles = 0
+ *   - Fix: Strict section detection with regex validation for Aon codes (XX.YYYY format)
+ *   - Fix: _getCategoryMap_() and _getFxMap_() also updated for safety
+ *   - Added debug logging to _preloadAonData_() for troubleshooting
+ * @previous v4.6.0 - Massive performance optimization for Build Market Data (90% faster!)
  *   - Pre-load Aon data: 10,080 reads → 3 reads (one per region)
  *   - Pre-index employees: 864,000 iterations → 600 (group once)
  *   - Build Full List: 300s → 30s (10x faster)
@@ -1158,8 +1164,9 @@ function _getExecDescMap_() {
   const lookupSh = ss.getSheetByName('Lookup');
   if (lookupSh) {
     const vals = lookupSh.getDataRange().getValues();
+    let inAonCodeSection = false;
+    
     for (let r = 0; r < vals.length; r++) {
-      // Look for rows with Aon Code in column A
       const row = vals[r];
       if (!row || row.length < 2) continue;
       
@@ -1167,12 +1174,24 @@ function _getExecDescMap_() {
       const col2 = String(row[1] || '').trim();
       const col3 = row.length > 2 ? String(row[2] || '').trim() : '';
       
-      // Skip header rows
-      if (col1 === 'Aon Code' || col1 === 'CIQ Level' || col1 === 'Region') continue;
+      // Detect Aon Code section header
+      if (col1 === 'Aon Code' && /Job.*Family.*Exec/i.test(col2)) {
+        inAonCodeSection = true;
+        continue;
+      }
       
-      // If column 1 looks like an Aon code (contains dot), map it
-      if (col1 && col1.includes('.') && col2) {
-        map.set(col1, col2);
+      // Stop at next section (new header row)
+      if (inAonCodeSection && (col1 === 'CIQ Level' || col1 === 'Region' || col1 === 'Aon Code')) {
+        inAonCodeSection = false;
+        continue;
+      }
+      
+      // Only read Aon Code section data
+      if (inAonCodeSection && col1 && col2) {
+        // Validate it's an Aon code format (XX.YYYY, not L5.5 IC)
+        if (/^[A-Z]{2}\.[A-Z0-9]{4}$/i.test(col1)) {
+          map.set(col1, col2);
+        }
       }
     }
   }
@@ -1211,23 +1230,37 @@ function _getCategoryMap_() {
   const ss = SpreadsheetApp.getActive();
   const map = new Map();
   
-  // Read from Lookup sheet
+  // Read from Lookup sheet (only Aon Code section)
   const lookupSh = ss.getSheetByName('Lookup');
   if (lookupSh) {
     const vals = lookupSh.getDataRange().getValues();
+    let inAonCodeSection = false;
+    
     for (let r = 0; r < vals.length; r++) {
       const row = vals[r];
       if (!row || row.length < 3) continue;
       
       const col1 = String(row[0] || '').trim();
+      const col2 = String(row[1] || '').trim();
       const col3 = String(row[2] || '').trim().toUpperCase();
       
-      // Skip header rows
-      if (col1 === 'Aon Code' || col1 === 'Category') continue;
+      // Detect Aon Code section header
+      if (col1 === 'Aon Code' && /Job.*Family.*Exec/i.test(col2) && col3 === 'Category') {
+        inAonCodeSection = true;
+        continue;
+      }
       
-      // If column 1 is an Aon code and column 3 is X0/Y1
-      if (col1 && col1.includes('.') && (col3 === 'X0' || col3 === 'Y1')) {
-        map.set(col1, col3);
+      // Stop at next section (new header row with different pattern)
+      if (inAonCodeSection && (col1 === 'CIQ Level' || col1 === 'Region')) {
+        break; // No more Aon Code section after this
+      }
+      
+      // Only read Aon Code section data
+      if (inAonCodeSection && col1 && (col3 === 'X0' || col3 === 'Y1')) {
+        // Validate it's an Aon code format (XX.YYYY, not L5.5 IC)
+        if (/^[A-Z]{2}\.[A-Z0-9]{4}$/i.test(col1)) {
+          map.set(col1, col3);
+        }
       }
     }
   }
@@ -1447,20 +1480,41 @@ function _getFxMap_() {
   const sh = ss.getSheetByName('Lookup');
   const fxMap = new Map();
   if (!sh) return fxMap;
-  const vals = sh.getDataRange().getValues(); if (!vals.length) return fxMap;
-  const head = vals[0].map(h => String(h || '').trim());
-  let cRegion = head.findIndex(h => /^Region$/i.test(h));
-  if (cRegion < 0) cRegion = head.findIndex(h => /^Site$/i.test(h));
-  const cFx = head.findIndex(h => /^FX$/i.test(h));
-  if (cRegion < 0 || cFx < 0) return fxMap;
-  for (let r=1; r<vals.length; r++) {
-    let region = String(vals[r][cRegion] || '').trim();
-    // Normalize
-    if (/^USA$/i.test(region)) region = 'US';
-    if (/^US\s*(Premium|National)?$/i.test(region)) region = 'US';
-    const fx = Number(vals[r][cFx] || '');
-    if (region) fxMap.set(region, fx);
+  
+  const vals = sh.getDataRange().getValues();
+  if (!vals.length) return fxMap;
+  
+  let inFxSection = false;
+  for (let r = 0; r < vals.length; r++) {
+    const row = vals[r];
+    if (!row || row.length < 3) continue;
+    
+    const col1 = String(row[0] || '').trim();
+    const col2 = String(row[1] || '').trim();
+    const col3 = String(row[2] || '').trim();
+    
+    // Detect FX section header (Region, Site, FX Rate)
+    if (col1 === 'Region' && col2 === 'Site' && /FX.*Rate/i.test(col3)) {
+      inFxSection = true;
+      continue;
+    }
+    
+    // Stop at next section (new header row)
+    if (inFxSection && (col1 === 'Aon Code' || col1 === 'CIQ Level')) {
+      break;
+    }
+    
+    // Only read FX section data
+    if (inFxSection && col1) {
+      let region = col1;
+      // Normalize
+      if (/^USA$/i.test(region)) region = 'US';
+      if (/^US\s*(Premium|National)?$/i.test(region)) region = 'US';
+      const fx = Number(col3) || 0;
+      if (region && fx > 0) fxMap.set(region, fx);
+    }
   }
+  
   return fxMap;
 }
 
@@ -4654,17 +4708,21 @@ function _preloadAonData_() {
   const ss = SpreadsheetApp.getActive();
   const regions = ['India', 'US', 'UK'];
   const aonCache = new Map();
-  const lookupMap = getLookupMap_(ss);
   
   for (const region of regions) {
     const sheet = getRegionSheet_(ss, region);
-    if (!sheet || sheet.getLastRow() <= 1) continue;
+    if (!sheet || sheet.getLastRow() <= 1) {
+      Logger.log(`Skipping region ${region} - sheet not found or empty`);
+      continue;
+    }
     
     // Read entire sheet ONCE
     const data = sheet.getDataRange().getValues();
-    const headers = data[0].map(h => String(h || '').trim());
+    const headers = data[0].map(h => String(h || '').replace(/\n/g, ' ').trim());
     
-    // Find columns
+    Logger.log(`Region ${region}: Headers = ${headers.slice(0, 10).join(', ')}`);
+    
+    // Find columns (headers may have newlines)
     const colJobCode = headers.findIndex(h => /Job.*Code/i.test(h));
     const colJobFamily = headers.findIndex(h => /Job.*Family/i.test(h));
     const colP10 = headers.findIndex(h => /10th.*Percentile/i.test(h));
@@ -4675,9 +4733,15 @@ function _preloadAonData_() {
     const colP75 = headers.findIndex(h => /75th.*Percentile/i.test(h));
     const colP90 = headers.findIndex(h => /90th.*Percentile/i.test(h));
     
-    if (colJobCode < 0) continue;
+    Logger.log(`Region ${region}: JobCode col=${colJobCode}, P10=${colP10}, P25=${colP25}, P625=${colP625}`);
+    
+    if (colJobCode < 0) {
+      Logger.log(`Skipping region ${region} - Job Code column not found`);
+      continue;
+    }
     
     // Index all rows
+    let rowCount = 0;
     for (let r = 1; r < data.length; r++) {
       const row = data[r];
       const jobCode = String(row[colJobCode] || '').trim();
@@ -4695,18 +4759,25 @@ function _preloadAonData_() {
       
       const key = `${region}|${family}|${ciqLevel}`;
       aonCache.set(key, {
-        p10: colP10 >= 0 ? row[colP10] : '',
-        p25: colP25 >= 0 ? row[colP25] : '',
-        p40: colP40 >= 0 ? row[colP40] : '',
-        p50: colP50 >= 0 ? row[colP50] : '',
-        p625: colP625 >= 0 ? row[colP625] : '',
-        p75: colP75 >= 0 ? row[colP75] : '',
-        p90: colP90 >= 0 ? row[colP90] : ''
+        p10: colP10 >= 0 && row[colP10] ? row[colP10] : '',
+        p25: colP25 >= 0 && row[colP25] ? row[colP25] : '',
+        p40: colP40 >= 0 && row[colP40] ? row[colP40] : '',
+        p50: colP50 >= 0 && row[colP50] ? row[colP50] : '',
+        p625: colP625 >= 0 && row[colP625] ? row[colP625] : '',
+        p75: colP75 >= 0 && row[colP75] ? row[colP75] : '',
+        p90: colP90 >= 0 && row[colP90] ? row[colP90] : ''
       });
+      
+      rowCount++;
+      if (rowCount <= 3) {
+        Logger.log(`Sample: ${jobCode} → ${family}, ${ciqLevel}, P25=${row[colP25]}, P625=${row[colP625]}`);
+      }
     }
+    
+    Logger.log(`Region ${region}: Indexed ${rowCount} job codes`);
   }
   
-  Logger.log(`Pre-loaded ${aonCache.size} Aon data combinations`);
+  Logger.log(`Pre-loaded ${aonCache.size} total Aon data combinations`);
   return aonCache;
 }
 
