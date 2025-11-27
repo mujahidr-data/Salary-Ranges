@@ -53,7 +53,9 @@ const SHEET_NAMES = {
   SALARY_RANGES_Y1: "Everyone Else",
   FULL_LIST: "Full List",
   FULL_LIST_USD: "Full List USD",
-  LOOKUP: "Lookup"
+  LOOKUP: "Lookup",
+  LEGACY_MAPPINGS: "Legacy Mappings",
+  EMPLOYEES_MAPPED: "Employees Mapped"
 };
 
 // UI Sheet name constants (used by calculator UI functions)
@@ -1485,6 +1487,7 @@ function buildFullListUsd_() {
   const cIMin = head.indexOf('Internal Min');
   const cIMed = head.indexOf('Internal Median');
   const cIMax = head.indexOf('Internal Max');
+  // CR columns don't need FX conversion (they're ratios)
   const fxMap = _getFxMap_();
 
   const out = [head];
@@ -1555,12 +1558,12 @@ function buildHelpSheet_() {
     ['   ✓ Base Data (employee list with salaries)'],
     ['   ✓ Bonus History (latest bonus/commission per employee)'],
     ['   ✓ Comp History (latest compensation change per employee)'],
-    ['   ✓ Auto-syncs Employees Mapped sheet (all employees from Bob)'],
+    ['   ✓ Employees Mapped sheet is manually maintained (legacy)'],
     ['   ✓ Auto-syncs Title Mapping sheet (all unique job titles)'],
     ['   Time: 1-2 minutes'],
     [''],
     ['   After importing:'],
-    ['   → Review "Employees Mapped" sheet'],
+    ['   → Review "Employees Mapped" sheet (if using legacy mapping)'],
     ['   → Map each employee to:'],
     ['      • Aon Code (job family like EN.SODE, FI.FINA)'],
     ['      • Level (L2 IC through L9 Mgr)'],
@@ -1586,7 +1589,7 @@ function buildHelpSheet_() {
     [''],
     ['Weekly/Monthly Data Refresh:'],
     ['1) 📥 Import Bob Data (get latest employees)'],
-    ['2) Update any new employee mappings in "Employees Mapped"'],
+    ['2) Update "Employees Mapped" if needed (legacy/manual)'],
     ['3) 📊 Build Market Data (rebuild Full Lists)'],
     [''],
     ['After Aon Data Update:'],
@@ -1646,10 +1649,11 @@ function buildHelpSheet_() {
     ['🗺️ MAPPING SHEETS'],
     ['═══════════════════════════════════════════════════════════════════════════════'],
     [''],
-    ['Employees Mapped - Maps employees to Aon codes and levels'],
+    ['Employees Mapped - Maps employees to Aon codes and levels (LEGACY/MANUAL)'],
     ['   Columns: Employee ID, Name, Aon Code, Level, Site, Salary, Status'],
     ['   Purpose: Define which job family and level each employee belongs to'],
-    ['   Updated: Auto-synced when you run "Import Bob Data"'],
+    ['   Updated: Manually maintained (not auto-synced)'],
+    ['   Note: Referenced by CR columns in calculators'],
     [''],
     ['Job family Descriptions - Maps Aon codes to friendly names'],
     ['   Columns: Aon Code, Job Family (Exec Description)'],
@@ -2033,15 +2037,12 @@ function buildCalculatorUI_() {
     formulasIntMax.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$U:$U,'Full List'!$S:$S,"")`]);
     formulasIntCount.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$U:$U,'Full List'!$T:$T,"")`]);
     
-    // Compa Ratio columns - Using dynamic ranges (full columns)
-    // Avg CR = Average (Median / Mid-point) if data exists
-    formulasAvgCR.push([`=IFERROR(IF($B$4="USD", AVERAGEIFS('Employees (Mapped)'!$F:$F,'Employees (Mapped)'!$C:$C,$B$2,'Employees (Mapped)'!$D:$D,$A${aRow},'Employees (Mapped)'!$E:$E,$B$3,'Employees (Mapped)'!$D:$D,"<>")/C${aRow}, AVERAGEIFS('Employees (Mapped)'!$F:$F,'Employees (Mapped)'!$C:$C,$B$2,'Employees (Mapped)'!$D:$D,$A${aRow},'Employees (Mapped)'!$E:$E,$B$3,'Employees (Mapped)'!$D:$D,"<>")/C${aRow}),"")`]);
-    // TT CR = Top Talent CR
-    formulasTTCR.push([`=IFERROR(IF($B$4="USD", AVERAGEIFS('Employees (Mapped)'!$F:$F,'Employees (Mapped)'!$C:$C,$B$2,'Employees (Mapped)'!$D:$D,$A${aRow},'Employees (Mapped)'!$E:$E,$B$3,'Employees (Mapped)'!$D:$D,"<>")/C${aRow}, AVERAGEIFS('Employees (Mapped)'!$F:$F,'Employees (Mapped)'!$C:$C,$B$2,'Employees (Mapped)'!$D:$D,$A${aRow},'Employees (Mapped)'!$E:$E,$B$3,'Employees (Mapped)'!$D:$D,"<>")/C${aRow}),"")`]);
-    // New Hire CR
-    formulasNewHireCR.push([`=IFERROR(IF($B$4="USD", AVERAGEIFS('Employees (Mapped)'!$F:$F,'Employees (Mapped)'!$C:$C,$B$2,'Employees (Mapped)'!$D:$D,$A${aRow},'Employees (Mapped)'!$E:$E,$B$3,'Employees (Mapped)'!$D:$D,"<>")/C${aRow}, AVERAGEIFS('Employees (Mapped)'!$F:$F,'Employees (Mapped)'!$C:$C,$B$2,'Employees (Mapped)'!$D:$D,$A${aRow},'Employees (Mapped)'!$E:$E,$B$3,'Employees (Mapped)'!$D:$D,"<>")/C${aRow}),"")`]);
-    // BT CR = Below Talent CR
-    formulasBTCR.push([`=IFERROR(IF($B$4="USD", AVERAGEIFS('Employees (Mapped)'!$F:$F,'Employees (Mapped)'!$C:$C,$B$2,'Employees (Mapped)'!$D:$D,$A${aRow},'Employees (Mapped)'!$E:$E,$B$3,'Employees (Mapped)'!$D:$D,"<>")/C${aRow}, AVERAGEIFS('Employees (Mapped)'!$F:$F,'Employees (Mapped)'!$C:$C,$B$2,'Employees (Mapped)'!$D:$D,$A${aRow},'Employees (Mapped)'!$E:$E,$B$3,'Employees (Mapped)'!$D:$D,"<>")/C${aRow}),"")`]);
+    // Compa Ratio columns - XLOOKUP from Full List (pre-calculated)
+    // Column Z = Key, Column U = Avg CR, Column V = TT CR, Column W = New Hire CR, Column X = BT CR
+    formulasAvgCR.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Z:$Z,'Full List'!$U:$U,"")`]);
+    formulasTTCR.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Z:$Z,'Full List'!$V:$V,"")`]);
+    formulasNewHireCR.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Z:$Z,'Full List'!$W:$W,"")`]);
+    formulasBTCR.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Z:$Z,'Full List'!$X:$X,"")`]);
   });
   
   // Batch set all formulas at once (single API call per column)
@@ -2694,29 +2695,77 @@ function rebuildFullListTabsWithValidation_() {
  ********************************/
 
 /**
- * Creates Employees Mapped sheet for employee → Aon code mapping
+ * Creates Legacy Mappings sheet with historical employee mappings
+ * This sheet is the source of truth for legacy mappings
  */
-function createEmployeesMappedSheet_() {
+function createLegacyMappingsSheet_() {
   const ss = SpreadsheetApp.getActive();
-  let sh = ss.getSheetByName('Employees Mapped');
+  let sh = ss.getSheetByName(SHEET_NAMES.LEGACY_MAPPINGS);
   if (!sh) {
-    sh = ss.insertSheet('Employees Mapped');
+    sh = ss.insertSheet(SHEET_NAMES.LEGACY_MAPPINGS);
   }
-  sh.setTabColor('#FF0000'); // Red color for automated sheets
+  sh.setTabColor('#808080'); // Gray for reference data
+  
   if (sh.getLastRow() === 0) {
-    sh.getRange(1,1,1,7).setValues([[ 
-      'Employee ID', 
-      'Employee Name',
-      'Aon Code', 
-      'Level', 
-      'Site',
-      'Base Salary',
-      'Status' 
-    ]]);
+    // Headers
+    sh.getRange(1,1,1,3).setValues([['Employee ID', 'Job Family (Base)', 'Full Mapping']]);
     sh.setFrozenRows(1);
-    sh.getRange(1,1,1,7).setFontWeight('bold');
-    sh.autoResizeColumns(1,7);
+    sh.getRange(1,1,1,3).setFontWeight('bold');
+    sh.autoResizeColumns(1,3);
   }
+}
+
+/**
+ * Gets legacy mapping for an employee from Legacy Mappings sheet
+ */
+function _getLegacyMapping_(empID) {
+  const ss = SpreadsheetApp.getActive();
+  const sh = ss.getSheetByName(SHEET_NAMES.LEGACY_MAPPINGS);
+  if (!sh || sh.getLastRow() <= 1) return null;
+  
+  const vals = sh.getRange(2,1,sh.getLastRow()-1,3).getValues();
+  for (let r=0; r<vals.length; r++) {
+    if (String(vals[r][0]).trim() === String(empID).trim()) {
+      const fullMapping = String(vals[r][2] || '').trim();
+      if (!fullMapping) return null;
+      
+      // Parse full mapping (e.g., "EN.SODE.P5" → aonCode="EN.SODE", level="L5 IC")
+      const parts = fullMapping.split('.');
+      if (parts.length < 3) return null;
+      
+      const aonCode = `${parts[0]}.${parts[1]}`;
+      const levelToken = parts[2]; // e.g., "P5", "M4", "E3"
+      const ciqLevel = _parseLevelToken_(levelToken);
+      
+      return { aonCode, ciqLevel, source: 'Legacy' };
+    }
+  }
+  return null;
+}
+
+/**
+ * Parses Aon level token (P5, M4, E3) to CIQ level (L5 IC, L4 Mgr, L3 IC)
+ */
+function _parseLevelToken_(token) {
+  if (!token) return '';
+  const match = token.match(/^([PME])(\d+)$/);
+  if (!match) return '';
+  
+  const letter = match[1];
+  const num = parseInt(match[2]);
+  
+  if (letter === 'P') return `L${num} IC`;
+  if (letter === 'M') return `L${num} Mgr`;
+  if (letter === 'E') {
+    // Executive mapping
+    if (num === 1) return 'L9 Mgr';
+    if (num === 2) return 'L8 Mgr';
+    if (num === 3) return 'L7 Mgr';
+    if (num === 4) return 'L6.5 Mgr';
+    if (num === 5) return 'L6 Mgr';
+    if (num === 6) return 'L5.5 Mgr';
+  }
+  return '';
 }
 
 /**
@@ -2958,11 +3007,11 @@ function buildCalculatorUIForY1_() {
     formulasIntMax.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$U:$U,'Full List'!$S:$S,"")`]);
     formulasIntCount.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$U:$U,'Full List'!$T:$T,"")`]);
     
-    // CR columns
-    formulasAvgCR.push([`=IFERROR(IF($B$4="USD", AVERAGEIFS('Employees (Mapped)'!$F:$F,'Employees (Mapped)'!$C:$C,$B$2,'Employees (Mapped)'!$D:$D,$A${aRow},'Employees (Mapped)'!$E:$E,$B$3,'Employees (Mapped)'!$D:$D,"<>")/C${aRow}, AVERAGEIFS('Employees (Mapped)'!$F:$F,'Employees (Mapped)'!$C:$C,$B$2,'Employees (Mapped)'!$D:$D,$A${aRow},'Employees (Mapped)'!$E:$E,$B$3,'Employees (Mapped)'!$D:$D,"<>")/C${aRow}),"")`]);
-    formulasTTCR.push([`=IFERROR(IF($B$4="USD", AVERAGEIFS('Employees (Mapped)'!$F:$F,'Employees (Mapped)'!$C:$C,$B$2,'Employees (Mapped)'!$D:$D,$A${aRow},'Employees (Mapped)'!$E:$E,$B$3,'Employees (Mapped)'!$D:$D,"<>")/C${aRow}, AVERAGEIFS('Employees (Mapped)'!$F:$F,'Employees (Mapped)'!$C:$C,$B$2,'Employees (Mapped)'!$D:$D,$A${aRow},'Employees (Mapped)'!$E:$E,$B$3,'Employees (Mapped)'!$D:$D,"<>")/C${aRow}),"")`]);
-    formulasNewHireCR.push([`=IFERROR(IF($B$4="USD", AVERAGEIFS('Employees (Mapped)'!$F:$F,'Employees (Mapped)'!$C:$C,$B$2,'Employees (Mapped)'!$D:$D,$A${aRow},'Employees (Mapped)'!$E:$E,$B$3,'Employees (Mapped)'!$D:$D,"<>")/C${aRow}, AVERAGEIFS('Employees (Mapped)'!$F:$F,'Employees (Mapped)'!$C:$C,$B$2,'Employees (Mapped)'!$D:$D,$A${aRow},'Employees (Mapped)'!$E:$E,$B$3,'Employees (Mapped)'!$D:$D,"<>")/C${aRow}),"")`]);
-    formulasBTCR.push([`=IFERROR(IF($B$4="USD", AVERAGEIFS('Employees (Mapped)'!$F:$F,'Employees (Mapped)'!$C:$C,$B$2,'Employees (Mapped)'!$D:$D,$A${aRow},'Employees (Mapped)'!$E:$E,$B$3,'Employees (Mapped)'!$D:$D,"<>")/C${aRow}, AVERAGEIFS('Employees (Mapped)'!$F:$F,'Employees (Mapped)'!$C:$C,$B$2,'Employees (Mapped)'!$D:$D,$A${aRow},'Employees (Mapped)'!$E:$E,$B$3,'Employees (Mapped)'!$D:$D,"<>")/C${aRow}),"")`]);
+    // CR columns - XLOOKUP from Full List (pre-calculated)
+    formulasAvgCR.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Z:$Z,'Full List'!$U:$U,"")`]);
+    formulasTTCR.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Z:$Z,'Full List'!$V:$V,"")`]);
+    formulasNewHireCR.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Z:$Z,'Full List'!$W:$W,"")`]);
+    formulasBTCR.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Z:$Z,'Full List'!$X:$X,"")`]);
   });
   
   // Set formulas
@@ -3014,43 +3063,60 @@ function createFullListPlaceholders_() {
   }
   sh.setTabColor('#FF0000'); // Red color for automated sheets
   if (sh.getLastRow() === 0) {
-    sh.getRange(1,1,1,21).setValues([[ 
+    sh.getRange(1,1,1,26).setValues([[ 
       'Site', 'Region', 'Aon Code (base)', 'Job Family (Exec)', 'Category', 'CIQ Level',
       'P10', 'P25', 'P40', 'P50', 'P62.5', 'P75', 'P90',
       'Range Start', 'Range Mid', 'Range End',
-      'Internal Min', 'Internal Median', 'Internal Max', 'Emp Count', 'Key'
+      'Internal Min', 'Internal Median', 'Internal Max', 'Emp Count',
+      'Avg CR', 'TT CR', 'New Hire CR', 'BT CR',
+      'Key'
     ]]);
     sh.setFrozenRows(1);
-    sh.getRange(1,1,1,21).setFontWeight('bold');
-    sh.autoResizeColumns(1,21);
+    sh.getRange(1,1,1,26).setFontWeight('bold');
+    sh.autoResizeColumns(1,26);
   }
 }
 
 /**
- * Syncs Employees Mapped sheet with Base Data
+ * Syncs Employees Mapped sheet with Base Data using smart mapping logic
+ * Priority: Legacy > Existing Approved > Title-Based Suggestion
  */
 function syncEmployeesMappedSheet_() {
   const ss = SpreadsheetApp.getActive();
-  const baseSh = ss.getSheetByName('Base Data');
+  const baseSh = ss.getSheetByName(SHEET_NAMES.BASE_DATA);
   if (!baseSh || baseSh.getLastRow() <= 1) {
     SpreadsheetApp.getActive().toast('Base Data not found or empty', 'Skipped', 3);
     return;
   }
   
-  const empSh = ss.getSheetByName('Employees Mapped') || ss.insertSheet('Employees Mapped');
-  if (empSh.getLastRow() === 0) {
-    createEmployeesMappedSheet_();
+  let empSh = ss.getSheetByName(SHEET_NAMES.EMPLOYEES_MAPPED);
+  if (!empSh) {
+    empSh = ss.insertSheet(SHEET_NAMES.EMPLOYEES_MAPPED);
+    empSh.setTabColor('#FF0000');
   }
   
-  // Get existing mappings
+  // Create headers if needed
+  if (empSh.getLastRow() === 0) {
+    empSh.getRange(1,1,1,12).setValues([[ 
+      'Employee ID', 'Employee Name', 'Job Title', 'Department', 'Site',
+      'Aon Code', 'Level', 'Confidence', 'Source', 'Status', 'Base Salary', 'Start Date'
+    ]]);
+    empSh.setFrozenRows(1);
+    empSh.getRange(1,1,1,12).setFontWeight('bold');
+  }
+  
+  // Get existing mappings (preserve approved ones)
   const existing = new Map();
   if (empSh.getLastRow() > 1) {
-    const empVals = empSh.getRange(2,1,empSh.getLastRow()-1,7).getValues();
+    const empVals = empSh.getRange(2,1,empSh.getLastRow()-1,12).getValues();
     empVals.forEach(row => {
       if (row[0]) {
         existing.set(String(row[0]).trim(), {
-          aonCode: row[2] || '',
-          level: row[3] || ''
+          aonCode: row[5] || '',
+          level: row[6] || '',
+          confidence: row[7] || '',
+          source: row[8] || '',
+          status: row[9] || ''
         });
       }
     });
@@ -3062,55 +3128,273 @@ function syncEmployeesMappedSheet_() {
   
   const baseHead = baseVals[0].map(h => String(h||''));
   const iEmpID = baseHead.findIndex(h => /Emp.*ID|Employee.*ID/i.test(h));
-  const iName = baseHead.findIndex(h => /^Name$/i.test(h));
-  const iSite = baseHead.findIndex(h => /Site/i.test(h));
-  const iSalary = baseHead.findIndex(h => /Base.*Pay|Base.*Salary/i.test(h));
+  const iName = baseHead.findIndex(h => /(Display.*name|^Name$|Emp.*Name)/i.test(h));
+  const iTitle = baseHead.findIndex(h => /Job.*title/i.test(h));
+  const iDept = baseHead.findIndex(h => /Department/i.test(h));
+  const iSite = baseHead.findIndex(h => /^Site$/i.test(h));
+  const iSalary = baseHead.findIndex(h => /Base.*salary/i.test(h));
+  const iStart = baseHead.findIndex(h => /Start.*date/i.test(h));
+  const iActive = baseHead.findIndex(h => /Active/i.test(h));
   
   if (iEmpID < 0) {
     SpreadsheetApp.getActive().toast('Employee ID column not found in Base Data', 'Error', 5);
     return;
   }
   
+  // Build title mapping index
+  const titleMap = _buildTitleMappingIndex_();
+  
   // Build new rows
   const rows = [];
+  let legacyCount = 0, titleBasedCount = 0, needsReviewCount = 0, approvedCount = 0;
+  
   for (let r = 1; r < baseVals.length; r++) {
     const row = baseVals[r];
     const empID = String(row[iEmpID] || '').trim();
     if (!empID) continue;
     
+    // Skip inactive employees
+    const isActive = iActive >= 0 ? String(row[iActive]||'').toLowerCase() === 'active' : true;
+    if (!isActive) continue;
+    
     const name = iName >= 0 ? String(row[iName] || '') : '';
+    const title = iTitle >= 0 ? String(row[iTitle] || '') : '';
+    const dept = iDept >= 0 ? String(row[iDept] || '') : '';
     const site = iSite >= 0 ? String(row[iSite] || '') : '';
     const salary = iSalary >= 0 ? row[iSalary] : '';
+    const startDate = iStart >= 0 ? row[iStart] : '';
     
+    let aonCode = '', ciqLevel = '', confidence = '', source = '', status = 'Needs Review';
+    
+    // Priority 1: Check if existing mapping is Approved
     const prev = existing.get(empID);
-    const aonCode = prev ? prev.aonCode : '';
-    const level = prev ? prev.level : '';
-    const status = (aonCode && level) ? 'Mapped' : 'Missing';
+    if (prev && prev.status === 'Approved') {
+      aonCode = prev.aonCode;
+      ciqLevel = prev.level;
+      confidence = prev.confidence;
+      source = prev.source;
+      status = 'Approved';
+      approvedCount++;
+    }
+    // Priority 2: Legacy mapping
+    else {
+      const legacy = _getLegacyMapping_(empID);
+      if (legacy) {
+        aonCode = legacy.aonCode;
+        ciqLevel = legacy.ciqLevel;
+        confidence = '100%';
+        source = 'Legacy';
+        status = 'Needs Review'; // Even legacy needs review
+        legacyCount++;
+      }
+      // Priority 3: Title-based suggestion
+      else if (title && titleMap.has(title)) {
+        const mapping = titleMap.get(title);
+        aonCode = mapping.aonCode;
+        ciqLevel = mapping.level;
+        confidence = '95%';
+        source = 'Title-Based';
+        status = 'Needs Review';
+        titleBasedCount++;
+      }
+      // Priority 4: Preserve existing if present (even if not approved)
+      else if (prev && prev.aonCode && prev.level) {
+        aonCode = prev.aonCode;
+        ciqLevel = prev.level;
+        confidence = prev.confidence || '50%';
+        source = prev.source || 'Manual';
+        status = prev.status || 'Needs Review';
+        needsReviewCount++;
+      }
+      // No mapping found
+      else {
+        confidence = '0%';
+        source = 'Unmapped';
+        status = 'Needs Review';
+        needsReviewCount++;
+      }
+    }
     
-    rows.push([empID, name, aonCode, level, site, salary, status]);
+    rows.push([empID, name, title, dept, site, aonCode, ciqLevel, confidence, source, status, salary, startDate]);
   }
   
   // Write to sheet
-  empSh.getRange(2,1,Math.max(1, empSh.getMaxRows()-1),7).clearContent();
+  empSh.getRange(2,1,Math.max(1, empSh.getMaxRows()-1),12).clearContent();
   if (rows.length) {
-    empSh.getRange(2,1,rows.length,7).setValues(rows);
+    empSh.getRange(2,1,rows.length,12).setValues(rows);
+    
+    // Add data validation for Status column (J)
+    const statusRule = SpreadsheetApp.newDataValidation()
+      .requireValueInList(['Needs Review', 'Approved', 'Rejected'], true)
+      .setAllowInvalid(false)
+      .build();
+    empSh.getRange(2,10,rows.length,1).setDataValidation(statusRule);
   }
   
   // Add conditional formatting
-  const rules = empSh.getConditionalFormatRules();
-  const rng = empSh.getRange('C2:D');
+  empSh.clearConditionalFormatRules();
+  const rules = [];
+  
+  // Green: Approved
   rules.push(SpreadsheetApp.newConditionalFormatRule()
-    .whenFormulaSatisfied('=AND(LEN($A2)>0,OR(LEN(C2)=0,LEN(D2)=0))')
+    .whenFormulaSatisfied('=$J2="Approved"')
+    .setBackground('#D5F5E3')
+    .setRanges([empSh.getRange('A2:L')])
+    .build());
+  
+  // Yellow: Needs Review
+  rules.push(SpreadsheetApp.newConditionalFormatRule()
+    .whenFormulaSatisfied('=$J2="Needs Review"')
+    .setBackground('#FFF9C4')
+    .setRanges([empSh.getRange('A2:L')])
+    .build());
+  
+  // Red: Rejected or missing mapping
+  rules.push(SpreadsheetApp.newConditionalFormatRule()
+    .whenFormulaSatisfied('=OR($J2="Rejected",AND(LEN($A2)>0,OR(LEN($F2)=0,LEN($G2)=0)))')
     .setBackground('#FDE7E9')
     .setFontColor('#D32F2F')
-    .setRanges([rng])
+    .setRanges([empSh.getRange('A2:L')])
     .build());
+  
   empSh.setConditionalFormatRules(rules);
+  empSh.autoResizeColumns(1,12);
   
-  empSh.autoResizeColumns(1,7);
+  const msg = `Synced ${rows.length} employees:\n` +
+    `✓ Approved: ${approvedCount}\n` +
+    `📋 Legacy: ${legacyCount}\n` +
+    `🔍 Title-Based: ${titleBasedCount}\n` +
+    `⚠️ Needs Review: ${needsReviewCount}`;
+  SpreadsheetApp.getActive().toast(msg, 'Employees Mapped', 8);
+}
+
+/**
+ * Builds title mapping index from Title Mapping sheet
+ */
+function _buildTitleMappingIndex_() {
+  const ss = SpreadsheetApp.getActive();
+  const sh = ss.getSheetByName('Title Mapping');
+  const map = new Map();
   
-  const missingCount = rows.filter(r => r[6] === 'Missing').length;
-  SpreadsheetApp.getActive().toast(`Synced ${rows.length} employees (${missingCount} need mapping)`, 'Employees Mapped', 5);
+  if (!sh || sh.getLastRow() <= 1) return map;
+  
+  const vals = sh.getRange(2,1,sh.getLastRow()-1,3).getValues();
+  vals.forEach(row => {
+    const title = String(row[0] || '').trim();
+    const aonCode = String(row[1] || '').trim();
+    const level = String(row[2] || '').trim();
+    if (title && aonCode && level) {
+      map.set(title, { aonCode, level });
+    }
+  });
+  
+  return map;
+}
+
+/**
+ * Calculate CR statistics for a specific job family/level/region
+ * Returns: {avgCR, ttCR, newHireCR, btCR}
+ */
+function _calculateCRStats_(jobFamily, ciqLevel, region, midPoint) {
+  const result = { avgCR: '', ttCR: '', newHireCR: '', btCR: '' };
+  
+  if (!midPoint || midPoint === 0 || midPoint === '') return result;
+  
+  try {
+    const ss = SpreadsheetApp.getActive();
+    const empSh = ss.getSheetByName(SHEET_NAMES.EMPLOYEES_MAPPED);
+    const perfSh = ss.getSheetByName(SHEET_NAMES.PERF_RATINGS);
+    
+    if (!empSh || empSh.getLastRow() <= 1) return result;
+    
+    // Get performance ratings map (EmpID → AYR 2024 rating)
+    const perfMap = new Map();
+    if (perfSh && perfSh.getLastRow() > 1) {
+      const perfVals = perfSh.getRange(2,1,perfSh.getLastRow()-1,6).getValues();
+      const perfHead = perfSh.getRange(1,1,1,6).getValues()[0].map(h => String(h||''));
+      const iPerfEmpID = perfHead.findIndex(h => /Employee.*ID/i.test(h));
+      const iPerfRating = perfHead.findIndex(h => /AYR.*2024/i.test(h));
+      
+      if (iPerfEmpID >= 0 && iPerfRating >= 0) {
+        perfVals.forEach(row => {
+          const empID = String(row[iPerfEmpID] || '').trim();
+          const rating = String(row[iPerfRating] || '').trim();
+          if (empID) perfMap.set(empID, rating);
+        });
+      }
+    }
+    
+    // Get employees and calculate CRs
+    const empVals = empSh.getRange(2,1,empSh.getLastRow()-1,12).getValues();
+    const execMap = _getExecDescMap_();
+    const cutoffDate = new Date('2025-01-01');
+    
+    let avgTotal = 0, avgCount = 0;
+    let ttTotal = 0, ttCount = 0;
+    let nhTotal = 0, nhCount = 0;
+    let btTotal = 0, btCount = 0;
+    
+    for (let r = 0; r < empVals.length; r++) {
+      const row = empVals[r];
+      const empID = String(row[0] || '').trim();
+      const aonCode = String(row[5] || '').trim();
+      const empLevel = String(row[6] || '').trim();
+      const empSite = String(row[4] || '').trim();
+      const status = String(row[9] || '').trim();
+      const salary = row[10];
+      const startDate = row[11];
+      
+      // Only approved mappings
+      if (status !== 'Approved') continue;
+      
+      // Match job family via Aon code
+      const empFamily = execMap.get(aonCode) || '';
+      if (empFamily !== jobFamily) continue;
+      
+      // Match level and region
+      if (empLevel !== ciqLevel || empSite !== region) continue;
+      
+      // Valid salary
+      if (!salary || isNaN(salary) || salary <= 0) continue;
+      
+      const cr = salary / midPoint;
+      
+      // Avg CR (all approved active employees)
+      avgTotal += cr;
+      avgCount++;
+      
+      // Get rating for TT and BT
+      const rating = perfMap.get(empID);
+      
+      // TT CR (rating = "HH")
+      if (rating === 'HH') {
+        ttTotal += cr;
+        ttCount++;
+      }
+      
+      // BT CR (rating = "ML" or "NI")
+      if (rating === 'ML' || rating === 'NI') {
+        btTotal += cr;
+        btCount++;
+      }
+      
+      // New Hire CR (Start Date >= 2025-01-01)
+      if (startDate && startDate instanceof Date && startDate >= cutoffDate) {
+        nhTotal += cr;
+        nhCount++;
+      }
+    }
+    
+    // Calculate averages
+    if (avgCount > 0) result.avgCR = avgTotal / avgCount;
+    if (ttCount > 0) result.ttCR = ttTotal / ttCount;
+    if (nhCount > 0) result.newHireCR = nhTotal / nhCount;
+    if (btCount > 0) result.btCR = btTotal / btCount;
+    
+    return result;
+  } catch (e) {
+    return result;
+  }
 }
 
 /**
@@ -3223,6 +3507,9 @@ function rebuildFullListAllCombinations_() {
           rangeEnd = _toNumber_(p625) || _toNumber_(p75) || _toNumber_(p90) || '';
         }
         
+        // Calculate CR values for this combination
+        const crStats = _calculateCRStats_(execDesc, ciqLevel, region, rangeMid);
+        
         rows.push([
           region,       // Site
           region,       // Region
@@ -3244,30 +3531,36 @@ function rebuildFullListAllCombinations_() {
           intStats.med,
           intStats.max,
           intStats.cnt,
+          crStats.avgCR,      // Avg CR (active employees)
+          crStats.ttCR,       // TT CR (AYR 2024 = "HH")
+          crStats.newHireCR,  // New Hire CR (Start Date >= 2025)
+          crStats.btCR,       // BT CR (AYR 2024 IN ("ML", "NI"))
           key
         ]);
       }
     }
   }
   
-  // Write to Full List
+  // Write to Full List (with CR columns)
   const fullListSh = ss.getSheetByName('Full List') || ss.insertSheet('Full List');
   fullListSh.setTabColor('#FF0000'); // Red color for automated sheets
   fullListSh.clearContents();
-  fullListSh.getRange(1,1,1,21).setValues([[ 
+  fullListSh.getRange(1,1,1,26).setValues([[ 
     'Site', 'Region', 'Aon Code (base)', 'Job Family (Exec)', 'Category', 'CIQ Level',
     'P10', 'P25', 'P40', 'P50', 'P62.5', 'P75', 'P90',
     'Range Start', 'Range Mid', 'Range End',
-    'Internal Min', 'Internal Median', 'Internal Max', 'Emp Count', 'Key'
+    'Internal Min', 'Internal Median', 'Internal Max', 'Emp Count',
+    'Avg CR', 'TT CR', 'New Hire CR', 'BT CR',
+    'Key'
   ]]);
   fullListSh.setFrozenRows(1);
-  fullListSh.getRange(1,1,1,21).setFontWeight('bold');
+  fullListSh.getRange(1,1,1,26).setFontWeight('bold');
   
   if (rows.length) {
-    fullListSh.getRange(2,1,rows.length,21).setValues(rows);
+    fullListSh.getRange(2,1,rows.length,26).setValues(rows);
   }
   
-  fullListSh.autoResizeColumns(1,21);
+  fullListSh.autoResizeColumns(1,26);
   
   // Clear cache
   CacheService.getDocumentCache().removeAll(['MAP:FULL_LIST']);
@@ -3321,7 +3614,7 @@ function freshBuild() {
     // Step 2: Create mapping sheets
     SpreadsheetApp.getActive().toast('⏳ Step 2/5: Creating mapping sheets...', 'Fresh Build', 3);
     createMappingPlaceholderSheets_();
-    createEmployeesMappedSheet_();
+    createLegacyMappingsSheet_();
     Utilities.sleep(500);
     
     // Step 3: Create Lookup sheet
@@ -3346,15 +3639,14 @@ function freshBuild() {
       '📋 SHEETS CREATED:\n' +
       '✓ Lookup (with 71 Aon code mappings)\n' +
       '✓ Aon region tabs (India, US, UK)\n' +
-      '✓ Employees Mapped\n' +
       '✓ Mapping sheets (5 sheets)\n' +
-      '✓ Salary Ranges calculator\n' +
+      '✓ Both calculator UIs (X0 & Y1)\n' +
       '✓ Full List placeholders\n\n' +
       '📋 NEXT STEPS:\n\n' +
       '1️⃣ Paste Aon market data into region tabs\n' +
       '2️⃣ Configure HiBob API (BOB_ID and BOB_KEY)\n' +
       '3️⃣ Run: 📥 Import Bob Data\n' +
-      '4️⃣ Map employees in "Employees Mapped" sheet\n' +
+      '4️⃣ Update "Employees Mapped" if needed (legacy)\n' +
       '5️⃣ Run: 📊 Build Market Data\n\n' +
       'Ready to proceed?',
       ui.ButtonSet.OK
@@ -3380,8 +3672,8 @@ function importBobData() {
     '✓ Bonus History (latest per employee)\n' +
     '✓ Comp History (latest per employee)\n' +
     '✓ Performance Ratings (latest ratings)\n' +
-    '✓ Auto-sync Employees Mapped sheet\n' +
     '✓ Auto-sync Title Mapping sheet\n\n' +
+    'Note: "Employees Mapped" is legacy/manual (not auto-synced)\n\n' +
     'Prerequisites:\n' +
     '• BOB_ID and BOB_KEY configured in Script Properties\n\n' +
     'Continue?',
@@ -3414,14 +3706,15 @@ function importBobData() {
     importBobPerformanceRatings();
     Utilities.sleep(1000);
     
-    // Step 5: Sync Employees Mapped sheet
-    SpreadsheetApp.getActive().toast('⏳ Step 5/6: Syncing Employees Mapped sheet...', 'Import Bob Data', 3);
-    syncEmployeesMappedSheet_();
+    // Step 5: Sync Title Mapping
+    SpreadsheetApp.getActive().toast('⏳ Step 5/6: Syncing Title Mapping...', 'Import Bob Data', 3);
+    syncTitleMapping_();
     Utilities.sleep(500);
     
-    // Step 6: Sync Title Mapping
-    SpreadsheetApp.getActive().toast('⏳ Step 6/6: Syncing Title Mapping...', 'Import Bob Data', 3);
-    syncTitleMapping_();
+    // Step 6: Sync Employees Mapped with smart logic
+    SpreadsheetApp.getActive().toast('⏳ Step 6/6: Syncing Employees Mapped (smart mapping)...', 'Import Bob Data', 3);
+    syncEmployeesMappedSheet_();
+    Utilities.sleep(500);
     
     // Success
     const msg = ui.alert(
@@ -3429,7 +3722,11 @@ function importBobData() {
       'All employee data imported successfully!\n\n' +
       '📋 NEXT STEPS:\n\n' +
       '1️⃣ Review "Employees Mapped" sheet\n' +
-      '   Map each employee to:\n' +
+      '   • Green rows = Approved ✓\n' +
+      '   • Yellow rows = Needs Review ⚠️\n' +
+      '   • Red rows = Rejected/Missing\n' +
+      '   Change Status dropdown to approve mappings\n\n' +
+      '2️⃣ For each employee, verify:\n' +
       '   • Aon Code (job family)\n' +
       '   • Level (L2 IC through L9 Mgr)\n\n' +
       '2️⃣ Review "Title Mapping" sheet\n' +
@@ -3463,7 +3760,7 @@ function buildMarketData() {
     '• Aon data pasted in region tabs\n' +
     '• Lookup sheet configured\n' +
     '• Job family Descriptions populated\n' +
-    '• Employees mapped in "Employees Mapped"\n\n' +
+    '• Employees mapped (if using legacy "Employees Mapped" sheet)\n\n' +
     'Continue?',
     ui.ButtonSet.YES_NO
   );
@@ -3532,11 +3829,65 @@ function onOpen() {
     .addItem('📖 Generate Help Sheet', 'buildHelpSheet_')
     .addItem('ℹ️ Quick Instructions', 'showInstructions');
   
-  menu.addSubMenu(toolsMenu)
+  menu.addSeparator()
+      .addItem('✅ Review Employee Mappings', 'reviewEmployeeMappings')
+      .addSeparator()
+      .addSubMenu(toolsMenu)
       .addToUi();
   
   // Auto-ensure pickers for both calculators
   // (Job family dropdowns populated on Fresh Build)
+}
+
+/**
+ * Review Employee Mappings - Show summary and open sheet
+ */
+function reviewEmployeeMappings() {
+  const ss = SpreadsheetApp.getActive();
+  const empSh = ss.getSheetByName(SHEET_NAMES.EMPLOYEES_MAPPED);
+  
+  if (!empSh || empSh.getLastRow() <= 1) {
+    SpreadsheetApp.getUi().alert(
+      '⚠️ No Employee Mappings',
+      'Employee mappings not found. Please run "Import Bob Data" first.',
+      SpreadsheetApp.getUi().ButtonSet.OK
+    );
+    return;
+  }
+  
+  // Count statuses
+  const vals = empSh.getRange(2,10,empSh.getLastRow()-1,1).getValues();
+  let approved = 0, needsReview = 0, rejected = 0;
+  
+  vals.forEach(row => {
+    const status = String(row[0] || '').trim();
+    if (status === 'Approved') approved++;
+    else if (status === 'Rejected') rejected++;
+    else needsReview++;
+  });
+  
+  const total = vals.length;
+  const pctApproved = total > 0 ? Math.round((approved / total) * 100) : 0;
+  
+  // Show summary
+  const ui = SpreadsheetApp.getUi();
+  const response = ui.alert(
+    '📊 Employee Mapping Summary',
+    `Total Employees: ${total}\n\n` +
+    `✅ Approved: ${approved} (${pctApproved}%)\n` +
+    `⚠️ Needs Review: ${needsReview}\n` +
+    `❌ Rejected: ${rejected}\n\n` +
+    `Color Coding:\n` +
+    `🟢 Green = Approved\n` +
+    `🟡 Yellow = Needs Review\n` +
+    `🔴 Red = Rejected/Missing\n\n` +
+    `Would you like to open the Employees Mapped sheet?`,
+    ui.ButtonSet.YES_NO
+  );
+  
+  if (response === ui.Button.YES) {
+    ss.setActiveSheet(empSh);
+  }
 }
 
 /**
