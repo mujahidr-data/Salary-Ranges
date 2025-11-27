@@ -2544,8 +2544,8 @@ function rebuildFullListTabsWithValidation_() {
 
 /**
  * Creates Legacy Mappings sheet with historical employee mappings
- * This sheet is the source of truth for legacy mappings
- * Auto-populates with provided legacy data
+ * Data is stored in Script Properties (persistent storage)
+ * Sheet is a "view" of the persistent data
  */
 function createLegacyMappingsSheet_() {
   const ss = SpreadsheetApp.getActive();
@@ -2561,14 +2561,98 @@ function createLegacyMappingsSheet_() {
   sh.setFrozenRows(1);
   sh.getRange(1,1,1,3).setFontWeight('bold').setBackground('#757575').setFontColor('#FFFFFF');
   
-  // Populate with legacy data
-  const legacyData = _getLegacyMappingData_();
+  // Try to load from Script Properties first (persistent storage)
+  let legacyData = _loadLegacyMappingsFromStorage_();
+  
+  // If no data in storage, use embedded data as initial seed
+  if (!legacyData || legacyData.length === 0) {
+    legacyData = _getLegacyMappingData_();
+    // Save to storage for future use
+    if (legacyData.length > 0) {
+      _saveLegacyMappingsToStorage_(legacyData);
+    }
+  }
+  
+  // Populate sheet
   if (legacyData.length > 0) {
     sh.getRange(2,1,legacyData.length,3).setValues(legacyData);
     sh.autoResizeColumns(1,3);
-    SpreadsheetApp.getActive().toast(`Loaded ${legacyData.length} legacy employee mappings`, 'Legacy Mappings', 5);
+    SpreadsheetApp.getActive().toast(`Loaded ${legacyData.length} legacy mappings from storage`, 'Legacy Mappings', 5);
   } else {
     sh.autoResizeColumns(1,3);
+  }
+}
+
+/**
+ * Saves legacy mappings to Script Properties (persistent storage)
+ * Survives sheet deletion and Fresh Build
+ */
+function _saveLegacyMappingsToStorage_(legacyData) {
+  try {
+    const scriptProperties = PropertiesService.getScriptProperties();
+    // Convert array to JSON string
+    const jsonData = JSON.stringify(legacyData);
+    
+    // Script Properties has a 9KB limit per key, so we might need to chunk large data
+    const maxChunkSize = 8000; // 8KB chunks to be safe
+    const chunks = [];
+    
+    for (let i = 0; i < jsonData.length; i += maxChunkSize) {
+      chunks.push(jsonData.substring(i, i + maxChunkSize));
+    }
+    
+    // Save chunk count
+    scriptProperties.setProperty('LEGACY_MAPPINGS_CHUNKS', chunks.length.toString());
+    
+    // Save each chunk
+    chunks.forEach((chunk, idx) => {
+      scriptProperties.setProperty(`LEGACY_MAPPINGS_${idx}`, chunk);
+    });
+    
+    // Save timestamp
+    scriptProperties.setProperty('LEGACY_MAPPINGS_UPDATED', new Date().toISOString());
+    
+    Logger.log(`Saved ${legacyData.length} legacy mappings to storage (${chunks.length} chunks)`);
+  } catch (e) {
+    Logger.log(`Error saving legacy mappings to storage: ${e.message}`);
+    SpreadsheetApp.getActive().toast('Warning: Could not save to persistent storage', 'Storage Error', 5);
+  }
+}
+
+/**
+ * Loads legacy mappings from Script Properties (persistent storage)
+ * Returns array of [EmpID, JobFamily, FullMapping] or null if not found
+ */
+function _loadLegacyMappingsFromStorage_() {
+  try {
+    const scriptProperties = PropertiesService.getScriptProperties();
+    const chunkCount = parseInt(scriptProperties.getProperty('LEGACY_MAPPINGS_CHUNKS') || '0');
+    
+    if (chunkCount === 0) {
+      Logger.log('No legacy mappings found in storage');
+      return null;
+    }
+    
+    // Reconstruct JSON from chunks
+    let jsonData = '';
+    for (let i = 0; i < chunkCount; i++) {
+      const chunk = scriptProperties.getProperty(`LEGACY_MAPPINGS_${i}`);
+      if (!chunk) {
+        Logger.log(`Missing chunk ${i}, storage may be corrupted`);
+        return null;
+      }
+      jsonData += chunk;
+    }
+    
+    // Parse JSON
+    const legacyData = JSON.parse(jsonData);
+    const lastUpdated = scriptProperties.getProperty('LEGACY_MAPPINGS_UPDATED');
+    
+    Logger.log(`Loaded ${legacyData.length} legacy mappings from storage (last updated: ${lastUpdated})`);
+    return legacyData;
+  } catch (e) {
+    Logger.log(`Error loading legacy mappings from storage: ${e.message}`);
+    return null;
   }
 }
 
@@ -2961,17 +3045,25 @@ function _getLegacyMappingData_() {
 }
 
 /**
- * Gets legacy mapping for an employee from Legacy Mappings sheet
+ * Gets legacy mapping for an employee
+ * Reads from Script Properties (persistent storage) first, then falls back to sheet
  */
 function _getLegacyMapping_(empID) {
-  const ss = SpreadsheetApp.getActive();
-  const sh = ss.getSheetByName(SHEET_NAMES.LEGACY_MAPPINGS);
-  if (!sh || sh.getLastRow() <= 1) return null;
+  // Try to load all legacy data (cached for performance)
+  let legacyData = _loadLegacyMappingsFromStorage_();
   
-  const vals = sh.getRange(2,1,sh.getLastRow()-1,3).getValues();
-  for (let r=0; r<vals.length; r++) {
-    if (String(vals[r][0]).trim() === String(empID).trim()) {
-      const fullMapping = String(vals[r][2] || '').trim();
+  // Fallback to sheet if storage is empty
+  if (!legacyData || legacyData.length === 0) {
+    const ss = SpreadsheetApp.getActive();
+    const sh = ss.getSheetByName(SHEET_NAMES.LEGACY_MAPPINGS);
+    if (!sh || sh.getLastRow() <= 1) return null;
+    legacyData = sh.getRange(2,1,sh.getLastRow()-1,3).getValues();
+  }
+  
+  // Find employee in legacy data
+  for (let r=0; r<legacyData.length; r++) {
+    if (String(legacyData[r][0]).trim() === String(empID).trim()) {
+      const fullMapping = String(legacyData[r][2] || '').trim();
       if (!fullMapping) return null;
       
       // Parse full mapping (e.g., "EN.SODE.P5" → aonCode="EN.SODE", level="L5 IC")
@@ -3071,7 +3163,11 @@ function updateLegacyMappingsFromApproved_() {
     legacySh.getRange(legacySh.getLastRow() + 1, 1, inserts.length, 3).setValues(inserts);
   }
   
-  const msg = `Updated Legacy Mappings: ${updates.length} updated, ${inserts.length} new`;
+  // Save all mappings to Script Properties (persistent storage)
+  const allLegacyData = legacySh.getRange(2, 1, legacySh.getLastRow() - 1, 3).getValues();
+  _saveLegacyMappingsToStorage_(allLegacyData);
+  
+  const msg = `Updated Legacy Mappings: ${updates.length} updated, ${inserts.length} new\nSaved to persistent storage ✓`;
   SpreadsheetApp.getActive().toast(msg, 'Legacy Mappings Synced', 5);
 }
 
