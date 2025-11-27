@@ -14,19 +14,15 @@
  * - Persistent legacy mapping storage
  * - Interactive calculator UI
  * 
- * @version 4.7.0
+ * @version 4.7.1
  * @date 2025-11-27
- * @changelog v4.7.0 - Feature: Auto-average .5 levels + Job Level from Bob Base Data
+ * @changelog v4.7.1 - Enhanced: Level Anomaly message clarity
+ *   - Was: "Expected P6, got P2" (unclear what this means)
+ *   - Now: "Bob: L6 IC (P6) ≠ Aon: P2" (clearly shows mismatch)
+ *   - Makes it obvious when Bob's Job Level doesn't match Aon Code level
+ * @previous v4.7.0 - Feature: Auto-average .5 levels + Job Level from Bob Base Data
  *   - Feature 1: .5 levels (L5.5 IC, L6.5 IC, L5.5 Mgr, L6.5 Mgr) now auto-averaged
- *     - If Aon data doesn't have .5 level, calculate as (lower + upper) / 2
- *     - Example: L5.5 IC = average of L5 IC and L6 IC
- *     - Applies to all percentiles (P10, P25, P40, P50, P62.5, P75, P90)
  *   - Feature 2: Level column in Employees Mapped ALWAYS from Bob Base Data
- *     - Was: Took level from mapping (approved/legacy/title-based)
- *     - Now: Always uses jobLevelFromBob (actual employee level)
- *     - Mapping only provides Aon Code, not Level
- *     - More accurate: employees can be at different levels than legacy mapping
- * @previous v4.6.8 - CRITICAL HOTFIX: Internal stats now ACTIVE employees only
  *   - Bug: Internal stats included inactive employees (exits after Jan 1, 2024)
  *   - Fix: Cross-reference with Base Data to check Active/Inactive status
  *   - Build active status index from Base Data ONCE (Map: empID → isActive)
@@ -4389,16 +4385,18 @@ function syncEmployeesMappedSheet_() {
     let levelAnomaly = '';
     let titleAnomaly = '';
     
-    // Level Anomaly: Check if CIQ level matches expected Aon level
+    // Level Anomaly: Check if Bob's Job Level matches the level in Aon Code
+    // Example: If Bob says employee is L6 IC, but Aon Code is EN.SODE.P2 (L2 IC level), flag it!
     if (aonCode && ciqLevel) {
-      // Expected Aon level token from CIQ level (e.g., "L5 IC" → "P5")
+      // Expected Aon level token from Bob's Job Level (e.g., "L6 IC" → "P6")
       const expectedToken = _ciqLevelToToken_(ciqLevel);
-      // Actual token from Aon Code (e.g., "EN.SODE.P5" → "P5")
+      // Actual token from Aon Code (e.g., "EN.SODE.P2" → "P2")
       const parts = aonCode.split('.');
       const actualToken = parts.length >= 3 ? parts[2] : '';
       
       if (expectedToken && actualToken && expectedToken !== actualToken) {
-        levelAnomaly = `Expected ${expectedToken}, got ${actualToken}`;
+        // Show both Bob's level and Aon Code level for clarity
+        levelAnomaly = `Bob: ${ciqLevel} (${expectedToken}) ≠ Aon: ${actualToken}`;
       }
     }
     
