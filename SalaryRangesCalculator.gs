@@ -8,14 +8,20 @@
  * - Bob API integration (Base Data, Bonus, Comp History)
  * - Aon market percentiles (P10, P25, P40, P50, P62.5, P75, P90)
  * - Multi-region support (US, UK, India) with FX conversion
- * - Salary range categories (X0, X1, Y1)
+ * - Salary range categories: X0 (Engineering/Product), Y1 (Everyone Else)
  * - Internal vs Market analytics
  * - Job family and title mapping
  * - Interactive calculator UI
  * 
- * @version 3.2.0-OPTIMIZED
+ * @version 3.3.0
  * @date 2025-11-27
- * @changelog v3.2.0 - Performance optimizations (40-60% faster execution)
+ * @changelog v3.3.0 - Simplified to 2 categories with updated range definitions
+ *   - Removed X1 category (now only X0 and Y1)
+ *   - X0 (Engineering/Product): P25 → P50 → P90
+ *   - Y1 (Everyone Else): P10 → P40 → P62.5
+ *   - Changed labels from percentile values to "Range Start/Mid/End"
+ *   - Auto-assign category based on job family
+ * @previous v3.2.0 - Performance optimizations (40-60% faster execution)
  *   - Consolidated duplicate helper functions
  *   - Added missing Bob import functions  
  *   - Optimized sheet reads with comprehensive caching
@@ -738,30 +744,25 @@ function AON_P75(region, family, ciqLevel)  { return _aonPick_(region, family, c
 function AON_P90(region, family, ciqLevel)  { return _aonPick_(region, family, ciqLevel, HDR_P90);  }
 
 /********************************
- * Category-based salary ranges (X0 / X1 / Y1)
+ * Category-based salary ranges (2 categories only)
+ * X0 = Engineering/Product: P25 (start) → P50 (mid) → P90 (end)
+ * Y1 = Everyone Else: P10 (start) → P40 (mid) → P62.5 (end)
  ********************************/
 function _rangeByCategory_(category, region, family, ciqLevel) {
   const cat = String(category || '').trim().toUpperCase();
   if (!cat) return { min: '', mid: '', max: '' };
 
   if (cat === 'X0') {
-    // X0: min=P62.5, mid=P75, max=P90
-    const min = AON_P625(region, family, ciqLevel);
-    const mid = AON_P75(region, family, ciqLevel);
+    // X0 (Engineering/Product): Range Start=P25, Range Mid=P50, Range End=P90
+    const min = AON_P25(region, family, ciqLevel);
+    const mid = AON_P50(region, family, ciqLevel);
     const max = AON_P90(region, family, ciqLevel);
     return { min, mid, max };
   }
-  if (cat === 'X1') {
-    // X1: min=P50, mid=P62.5, max=P75
-    const min = AON_P50(region, family, ciqLevel);
-    const mid = AON_P625(region, family, ciqLevel);
-    const max = AON_P75(region, family, ciqLevel);
-    return { min, mid, max };
-  }
   if (cat === 'Y1') {
-    // Y1: min=P40, mid=P50, max=P62.5
-    const min = AON_P40(region, family, ciqLevel);
-    const mid = AON_P50(region, family, ciqLevel);
+    // Y1 (Everyone Else): Range Start=P10, Range Mid=P40, Range End=P62.5
+    const min = AON_P10(region, family, ciqLevel);
+    const mid = AON_P40(region, family, ciqLevel);
     const max = AON_P625(region, family, ciqLevel);
     return { min, mid, max };
   }
@@ -1335,10 +1336,10 @@ function buildFullListUsd_() {
 
 function exportProposedSalaryRanges_() {
   const ui = SpreadsheetApp.getUi();
-  const resp = ui.prompt('Export Proposed Salary Ranges', 'Enter category (X0, X1, Y1). Default X0:', ui.ButtonSet.OK_CANCEL);
+  const resp = ui.prompt('Export Proposed Salary Ranges', 'Enter category (X0 or Y1). Default X0:', ui.ButtonSet.OK_CANCEL);
   if (resp.getSelectedButton() !== ui.Button.OK) return;
   const category = String(resp.getResponseText() || 'X0').trim().toUpperCase();
-  if (!/^(X0|X1|Y1)$/.test(category)) { ui.alert('Invalid category. Use X0, X1, or Y1.'); return; }
+  if (!/^(X0|Y1)$/.test(category)) { ui.alert('Invalid category. Use X0 or Y1.'); return; }
   // For brevity, reuse Full List logic then map columns per category. Users can use Full List for calculators; export remains optional.
   rebuildFullListTabs_(); ui.alert('Use the Full List sheet for calculators; export file creation trimmed in merged build.');
 }
@@ -1390,7 +1391,7 @@ function buildHelpSheet_() {
     ['- Full List includes: P10/P25/P40/P50/P62.5/P75/P90 + Internal Min/Median/Max + Employees'],
     ['- Cache index built on demand (10-min TTL) for fast lookups'],
     ['- SALARY_RANGE reads Full List index first, falls back to direct Aon lookups if missing'],
-    ['- Category mapping: X0 = P62.5/P75/P90, X1 = P50/P62.5/P75, Y1 = P40/P50/P62.5'],
+    ['- Category mapping: X0 (Engineering/Product) = P25/P50/P90, Y1 (Everyone Else) = P10/P40/P62.5'],
     [''],
     ['MAPPINGS'],
     ['- Job family Descriptions: Aon Code ↔ Exec Description (use "Manage Exec Mappings")'],
@@ -1507,13 +1508,13 @@ function ensureCategoryPicker_() {
   if (!sh) return;
   const cell = sh.getRange('B3');
   const rule = SpreadsheetApp.newDataValidation()
-    .requireValueInList(['X0','X1','Y1'], true)
+    .requireValueInList(['X0','Y1'], true) // Only 2 categories now
     .setAllowInvalid(false)
     .build();
   const currentRule = cell.getDataValidation();
   if (!currentRule || String(currentRule) !== String(rule)) cell.setDataValidation(rule);
   const v = String(cell.getDisplayValue() || '').trim();
-  if (!v) cell.setValue('X0');
+  if (!v || v === 'X1') cell.setValue('X0'); // Default to X0, convert old X1 to X0
 }
 
 function ensureRegionPicker_() {
@@ -1553,11 +1554,11 @@ function buildCalculatorUI_() {
   sh.getRange('A3').setValue('Category');
   sh.getRange('A4').setValue('Region');
 
-  // Header row
+  // Header row - Updated labels for new range definitions
   sh.getRange('A7').setValue('Level');
-  sh.getRange('B7').setValue('P62.5');
-  sh.getRange('C7').setValue('P75');
-  sh.getRange('D7').setValue('P90');
+  sh.getRange('B7').setValue('Range Start'); // Was P62.5
+  sh.getRange('C7').setValue('Range Mid');   // Was P75
+  sh.getRange('D7').setValue('Range End');   // Was P90
   sh.getRange('F7').setValue('Min');
   sh.getRange('G7').setValue('Median');
   sh.getRange('H7').setValue('Max');
@@ -1704,9 +1705,10 @@ function _isEngineeringOrAllowedTE_(familyOrCode) {
 }
 
 function _effectiveCategoryForFamily_(category, familyOrCode) {
-  const cat = String(category || '').trim().toUpperCase();
-  if (cat === 'X0' || cat === 'X1') {
-    return _isEngineeringOrAllowedTE_(familyOrCode) ? cat : 'Y1';
+  // Simplified: Only X0 (Engineering/Product) or Y1 (Everyone Else)
+  // X0 is only for Engineering and allowed TE families
+  if (_isEngineeringOrAllowedTE_(familyOrCode)) {
+    return 'X0';
   }
   return 'Y1';
 }
@@ -1720,9 +1722,11 @@ function _getRangeFromFullList_(category, region, family, ciqLevel) {
   const rec = idx[`${exec}${ciq}${reg}`];
   if (!rec) return { min:'', mid:'', max:'' };
   const pick = (cat) => {
-    if (cat === 'X0') return { min: rec.p625, mid: rec.p75,  max: rec.p90 };
-    if (cat === 'X1') return { min: rec.p50,  mid: rec.p625, max: rec.p75 };
-    if (cat === 'Y1') return { min: rec.p40,  mid: rec.p50,  max: rec.p625 };
+    // Updated range definitions:
+    // X0 (Engineering/Product): P25 → P50 → P90
+    // Y1 (Everyone Else): P10 → P40 → P62.5
+    if (cat === 'X0') return { min: rec.p25, mid: rec.p50, max: rec.p90 };
+    if (cat === 'Y1') return { min: rec.p10, mid: rec.p40, max: rec.p625 };
     return { min:'', mid:'', max:'' };
   };
   const out = pick(String(category || '').trim().toUpperCase());
@@ -2318,10 +2322,10 @@ function showInstructions() {
     
     <h3>Categories:</h3>
     <ul>
-      <li><strong>X0</strong>: P62.5 (min) / P75 (mid) / P90 (max) - Top of market</li>
-      <li><strong>X1</strong>: P50 (min) / P62.5 (mid) / P75 (max) - Mid-market</li>
-      <li><strong>Y1</strong>: P40 (min) / P50 (mid) / P62.5 (max) - Entry-level</li>
+      <li><strong>X0 (Engineering/Product)</strong>: P25 (start) / P50 (mid) / P90 (end) - Engineering & Product roles</li>
+      <li><strong>Y1 (Everyone Else)</strong>: P10 (start) / P40 (mid) / P62.5 (end) - All other roles</li>
     </ul>
+    <p><em>Note: Category is automatically determined based on job family</em></p>
     
     <p><strong>Aon Data Source:</strong><br>
     <a href="https://drive.google.com/drive/folders/1bTogiTF18CPLHLZwJbDDrZg0H3SZczs-" target="_blank">

@@ -1,5 +1,35 @@
 # Changelog - Salary Ranges Calculator
 
+## [3.3.0] - 2025-11-27
+
+### 🎯 Major Simplification
+- **Reduced from 3 categories to 2** for clarity
+- **Auto-assignment** of category based on job family
+
+### 📊 Category Changes
+- **X0 (Engineering/Product)** - For Engineering & Product roles
+  - Range: P25 (start) → P50 (mid) → P90 (end)
+  - Previously was P62.5 → P75 → P90
+- **Y1 (Everyone Else)** - For all other roles
+  - Range: P10 (start) → P40 (mid) → P62.5 (end)
+  - Previously was P40 → P50 → P62.5
+- **Removed X1** - Consolidated into X0/Y1 logic
+
+### 🏷️ Label Changes
+- Changed from percentile values (P25, P50, P90) to user-friendly labels
+- **"Range Start"** (was P62.5 or P40)
+- **"Range Mid"** (was P75 or P50)
+- **"Range End"** (was P90 or P62.5)
+
+### 🔧 Functional Changes
+- Category picker now only shows X0 and Y1
+- Auto-converts old X1 selections to X0
+- Updated all calculation functions for new ranges
+- Updated UI headers with new labels
+- Updated help documentation
+
+---
+
 ## [3.2.0-OPTIMIZED] - 2025-11-27
 
 ### 🚀 Performance Improvements
