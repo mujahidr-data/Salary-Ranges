@@ -55,8 +55,8 @@ const SHEET_NAMES = {
 
 const REGION_TAB = {
   'India': 'Aon India - 2025',
-  'US': 'Aon US Premium - 2025',
-  'UK': 'Aon UK London - 2025'
+  'US': 'Aon US - 2025',
+  'UK': 'Aon UK - 2025'
 };
 
 // ============================================================================
@@ -845,10 +845,10 @@ function _aonPick_(region, family, ciqLevel, headerRegex) {
 function getRegionSheet_(ss, region) {
   const r = String(region || '').trim();
   if (r === 'US' || r === 'US Premium' || r === 'US National') {
-    return ss.getSheetByName('Aon US Premium - 2025');
+    return ss.getSheetByName('Aon US - 2025');
   }
-  if (r === 'UK') {
-    return ss.getSheetByName('Aon UK London - 2025');
+  if (r === 'UK' || r === 'UK London') {
+    return ss.getSheetByName('Aon UK - 2025');
   }
   if (r === 'India') {
     return ss.getSheetByName('Aon India - 2025');
@@ -1472,8 +1472,8 @@ function createAonPlaceholderSheets_() {
   const ss = SpreadsheetApp.getActive();
   const targets = [
     'Aon India - 2025',
-    'Aon US Premium - 2025',
-    'Aon UK London - 2025'
+    'Aon US - 2025',
+    'Aon UK - 2025'
   ];
   const headers = [
     'Job Code',
@@ -1820,8 +1820,8 @@ function openExecMappingManager_() {
 function seedExecMappingsFromAon_() {
   const ss = SpreadsheetApp.getActive();
   const regionSheets = [
-    ss.getSheetByName('US') || ss.getSheetByName('Aon US Premium - 2025'),
-    ss.getSheetByName('UK') || ss.getSheetByName('Aon UK London - 2025'),
+    ss.getSheetByName('US') || ss.getSheetByName('Aon US - 2025'),
+    ss.getSheetByName('UK') || ss.getSheetByName('Aon UK - 2025'),
     ss.getSheetByName('India') || ss.getSheetByName('Aon India - 2025')
   ].filter(Boolean);
   if (!regionSheets.length) { SpreadsheetApp.getActive().toast('No region sheets found','Info',3); return; }
@@ -1903,8 +1903,8 @@ function fillRegionFamilies_() {
   const execMap = _getExecDescMap_();
   const toAdd = new Set();
   const regionSheets = [
-    ss.getSheetByName('US') || ss.getSheetByName('Aon US Premium - 2025'),
-    ss.getSheetByName('UK') || ss.getSheetByName('Aon UK London - 2025'),
+    ss.getSheetByName('US') || ss.getSheetByName('Aon US - 2025'),
+    ss.getSheetByName('UK') || ss.getSheetByName('Aon UK - 2025'),
     ss.getSheetByName('India') || ss.getSheetByName('Aon India - 2025')
   ].filter(Boolean);
   let totalMissing = 0, totalFilled = 0;
@@ -2148,7 +2148,7 @@ function validatePrerequisites_() {
   const errors = [];
   
   // Check Aon region tabs
-  const regions = ['Aon US Premium - 2025', 'Aon UK London - 2025', 'Aon India - 2025'];
+  const regions = ['Aon US - 2025', 'Aon UK - 2025', 'Aon India - 2025'];
   regions.forEach(name => {
     const sh = ss.getSheetByName(name);
     if (!sh || sh.getLastRow() <= 1) {
