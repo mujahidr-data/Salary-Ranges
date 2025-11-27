@@ -47,14 +47,16 @@ const SHEET_NAMES = {
   BASE_DATA: "Base Data",
   BONUS_HISTORY: "Bonus History",
   COMP_HISTORY: "Comp History",
-  SALARY_RANGES: "Salary Ranges",
+  SALARY_RANGES_X0: "Salary Ranges (X0)",
+  SALARY_RANGES_Y1: "Salary Ranges (Y1)",
   FULL_LIST: "Full List",
   FULL_LIST_USD: "Full List USD",
   LOOKUP: "Lookup"
 };
 
-// UI Sheet name constant (used by calculator UI functions)
-const UI_SHEET_NAME = "Salary Ranges";
+// UI Sheet name constants (used by calculator UI functions)
+const UI_SHEET_NAME = "Salary Ranges (X0)";  // X0 = Engineering/Product
+const UI_SHEET_NAME_Y1 = "Salary Ranges (Y1)";  // Y1 = Everyone Else
 
 const REGION_TAB = {
   'India': 'Aon India - 2025',
@@ -1290,24 +1292,7 @@ function rebuildFullListTabs_() {
   fl.autoResizeColumns(1, fullHeader.length);
 
   const baseSh = ss.getSheetByName('Base Data');
-  const hasBob = !!(baseSh && baseSh.getLastRow() > 1);
-  if (hasBob) {
-    const sh2 = ss.getSheetByName('Coverage Summary') || ss.insertSheet('Coverage Summary');
-    sh2.clearContents(); sh2.getRange(1,1,1,6).setValues([['Site','Aon Code','Job Family (Exec)','Levels expected','Levels with market','Levels with internal']]);
-    const covMap = new Map();
-    rows.forEach(r => { const site = r[0], base = r[2], execFam = r[3], ciq = r[5]; const p62 = r[9], p75 = r[10], p90 = r[11], iMed = r[13]; const k = `${site}|${base}`; if (!covMap.has(k)) covMap.set(k, {execFam, exp:0, mk:0, inr:0, ciqs:new Set()}); const acc = covMap.get(k); if (!acc.ciqs.has(ciq)) { acc.ciqs.add(ciq); acc.exp++; } if (_isNum_(p62) || _isNum_(p75) || _isNum_(p90)) acc.mk++; if (_isNum_(iMed)) acc.inr++; });
-    const covRows = []; covMap.forEach((acc, key) => { const [site, base] = key.split('|'); covRows.push([site, base, acc.execFam, acc.exp, acc.mk, acc.inr]); });
-    if (covRows.length) sh2.getRange(2,1,covRows.length,6).setValues(covRows); sh2.autoResizeColumns(1, 6);
-
-    const sh3 = ss.getSheetByName('Employees (Mapped)') || ss.insertSheet('Employees (Mapped)');
-    // Only clear the first 5 columns to preserve manual columns to the right
-    sh3.getRange(1,1,Math.max(2, sh3.getMaxRows()),5).clearContent();
-    sh3.getRange(1,1,1,5).setValues([['EmpID','Aon Code','Suffix','Site','Base salary']]);
-    const empRows = _readMappedEmployeesForAudit_(); if (empRows.length) sh3.getRange(2,1,empRows.length,5).setValues(empRows); sh3.autoResizeColumns(1,5);
-    SpreadsheetApp.getActive().toast('Full List + Coverage Summary + Employees (Mapped) rebuilt', 'Done', 5);
-  } else {
-    SpreadsheetApp.getActive().toast('Full List rebuilt (Bob Base Data not found — skipped Coverage Summary and Employees (Mapped))', 'Done', 7);
-  }
+  SpreadsheetApp.getActive().toast('Full List rebuilt successfully', 'Done', 5);
 }
 
 function _getFxMap_() {
@@ -1387,65 +1372,231 @@ function buildHelpSheet_() {
   const sh = ss.getSheetByName('About & Help') || ss.insertSheet('About & Help');
   sh.clearContents();
   const lines = [
-    ['Salary Range Calculator - Help & Getting Started'],
+    ['💰 Salary Range Calculator - Help & Getting Started'],
     [''],
-    ['⚡ QUICK START (Recommended)'],
-    ['1) Paste Aon data into region tabs (US, UK, India) with headers: Job Code, Job Family, 10th, 25th, 40th, 50th, 62.5th, 75th, 90th'],
-    ['2) Setup → ⚡ Quick Setup (Run Once) - Initializes entire system automatically'],
-    ['3) Configure HiBob API: Extensions > Apps Script > Project Settings > Script Properties (BOB_ID, BOB_KEY)'],
-    ['4) Import Data → 🔄 Import All Bob Data'],
-    ['5) Build → 📊 Rebuild Full List (with validation)'],
-    ['6) Start using the calculator!'],
+    ['═══════════════════════════════════════════════════════════════════════════════'],
+    ['🎯 SIMPLIFIED WORKFLOW - 3 STEPS ONLY'],
+    ['═══════════════════════════════════════════════════════════════════════════════'],
     [''],
-    ['MANUAL SETUP (Alternative - for granular control)'],
-    ['1) Setup → Create Aon placeholder tabs (creates empty US/UK/India tabs if needed)'],
-    ['2) Paste Aon data into region tabs with percentile columns (P10, P25, P40, P50, P62.5, P75, P90)'],
-    ['3) Setup → Create mapping placeholder tabs'],
-    ['4) Build → Seed All Job Family Mappings (combines exec mappings + job family fill)'],
-    ['5) Setup → Build Calculator UI'],
-    ['6) Configure HiBob API credentials in Script Properties'],
-    ['7) Import Data → Import All Bob Data'],
-    ['8) Build → Sync All Bob Mappings (employee levels + titles)'],
-    ['9) Build → Rebuild Full List (with validation)'],
+    ['📋 FIRST TIME SETUP'],
     [''],
-    ['REGULAR WORKFLOW'],
-    ['A) Import Data → Import All Bob Data (refresh employee data from HiBob)'],
-    ['B) Build → Rebuild Full List (with validation) - generates comprehensive ranges'],
-    ['C) Build → Build Full List USD (optional FX-applied view for multi-region analysis)'],
-    ['D) Use calculator UI or formulas: =SALARY_RANGE("X0", "US", "EN.SODE", "L5 IC")'],
-    ['E) Export → Export Proposed Ranges (optional export to separate sheet)'],
+    ['🏗️ STEP 1: Fresh Build (Create All Sheets)'],
+    ['   Menu: 💰 Salary Ranges Calculator → 🏗️ Fresh Build (Create All Sheets)'],
+    ['   What it creates:'],
+    ['   ✓ Aon region tabs (India, US, UK) with headers'],
+    ['   ✓ Mapping sheets (Lookup, Job family Descriptions, Employee Level Mapping, etc.)'],
+    ['   ✓ Calculator UIs (Salary Ranges X0 and Y1)'],
+    ['   ✓ Full List placeholders'],
+    ['   Time: ~10 seconds'],
     [''],
-    ['SIMPLIFIED MENU FUNCTIONS'],
-    ['- Quick Setup: Runs entire initialization sequence automatically'],
-    ['- Seed All Job Family Mappings: Combines exec mappings + job family fill'],
-    ['- Sync All Bob Mappings: Syncs employee levels + title mappings together'],
-    ['- Rebuild Full List (with validation): Validates prerequisites before building'],
+    ['   After running Fresh Build:'],
+    ['   → Paste your Aon market data into:'],
+    ['      • Aon India - 2025'],
+    ['      • Aon US - 2025'],
+    ['      • Aon UK - 2025'],
+    ['   → Configure HiBob API credentials:'],
+    ['      Extensions → Apps Script → Project Settings → Script Properties'],
+    ['      Add: BOB_ID and BOB_KEY (from HiBob service account)'],
     [''],
-    ['PERCENTILES SUPPORTED'],
-    ['- P10, P25, P40, P50, P62.5, P75, P90 (all imported from Aon data)'],
-    ['- Custom functions: AON_P10(), AON_P25(), AON_P40(), AON_P50(), AON_P625(), AON_P75(), AON_P90()'],
+    ['📥 STEP 2: Import Bob Data'],
+    ['   Menu: 💰 Salary Ranges Calculator → 📥 Import Bob Data'],
+    ['   What it imports:'],
+    ['   ✓ Base Data (employee list with salaries)'],
+    ['   ✓ Bonus History (latest bonus/commission per employee)'],
+    ['   ✓ Comp History (latest compensation change per employee)'],
+    ['   ✓ Auto-syncs Employees Mapped sheet (all employees from Bob)'],
+    ['   ✓ Auto-syncs Title Mapping sheet (all unique job titles)'],
+    ['   Time: 1-2 minutes'],
     [''],
-    ['CALCULATIONS'],
-    ['- Full List includes: P10/P25/P40/P50/P62.5/P75/P90 + Internal Min/Median/Max + Employees'],
-    ['- Cache index built on demand (10-min TTL) for fast lookups'],
-    ['- SALARY_RANGE reads Full List index first, falls back to direct Aon lookups if missing'],
-    ['- Category mapping: X0 (Engineering/Product) = P25/P50/P90, Y1 (Everyone Else) = P10/P40/P62.5'],
+    ['   After importing:'],
+    ['   → Review "Employees Mapped" sheet'],
+    ['   → Map each employee to:'],
+    ['      • Aon Code (job family like EN.SODE, FI.FINA)'],
+    ['      • Level (L2 IC through L9 Mgr)'],
+    ['   → Review "Title Mapping" sheet'],
+    ['   → Map job titles to Aon Codes'],
     [''],
-    ['MAPPINGS'],
-    ['- Job family Descriptions: Aon Code ↔ Exec Description (use "Manage Exec Mappings")'],
-    ['- Aon Code Remap: e.g., EN.SOML → EN.AIML for vendor changes'],
-    ['- Title Mapping / Employee Level Mapping: use “Enhance mapping sheets” to add Missing highlights + counts'],
+    ['📊 STEP 3: Build Market Data'],
+    ['   Menu: 💰 Salary Ranges Calculator → 📊 Build Market Data (Full Lists)'],
+    ['   What it builds:'],
+    ['   ✓ Full List (all X0/Y1 job family/level combinations, local currency)'],
+    ['   ✓ Full List USD (USD converted for multi-region analysis)'],
+    ['   ✓ Includes ALL eligible job families (not just mapped employees)'],
+    ['   ✓ Adds internal stats (Min/Median/Max/Count) where employees exist'],
+    ['   Time: 30-90 seconds'],
     [''],
-    ['Menu overview'],
-    ['Setup: Generate Help sheet, create tabs, category picker, manage mappings, enhance mapping sheets'],
-    ['Build: Rebuild Full List, Seed exec mappings from region tabs, Build Full List USD, Clear caches'],
-    ['Export: Proposed Salary Ranges'],
-    ['Tools: Apply currency format'],
+    ['   You can now use the calculators!'],
+    ['   → "Salary Ranges (X0)" - Engineering & Product'],
+    ['   → "Salary Ranges (Y1)" - Everyone Else'],
     [''],
-    ['Tips'],
-    ['- Keep region names as US/UK/India; FX is read from Lookup (Region, FX)'],
-    ['- If data looks stale: Build → Clear all caches'],
-    ['- For performance: prefer UI_SALARY_RANGE and keep Full List up to date']
+    ['═══════════════════════════════════════════════════════════════════════════════'],
+    ['🔄 REGULAR REFRESH WORKFLOW'],
+    ['═══════════════════════════════════════════════════════════════════════════════'],
+    [''],
+    ['Weekly/Monthly Data Refresh:'],
+    ['1) 📥 Import Bob Data (get latest employees)'],
+    ['2) Update any new employee mappings in "Employees Mapped"'],
+    ['3) 📊 Build Market Data (rebuild Full Lists)'],
+    [''],
+    ['After Aon Data Update:'],
+    ['1) Paste new Aon data into region tabs'],
+    ['2) 📊 Build Market Data (rebuild Full Lists)'],
+    [''],
+    ['═══════════════════════════════════════════════════════════════════════════════'],
+    ['📊 CALCULATORS'],
+    ['═══════════════════════════════════════════════════════════════════════════════'],
+    [''],
+    ['Two Calculators Available:'],
+    [''],
+    ['🔧 Salary Ranges (X0) - Engineering & Product'],
+    ['   • Range: P25 (Start) → P50 (Mid) → P90 (End)'],
+    ['   • For: Engineering, Product, AI/ML roles'],
+    ['   • Category fixed to X0'],
+    [''],
+    ['👥 Salary Ranges (Y1) - Everyone Else'],
+    ['   • Range: P10 (Start) → P40 (Mid) → P62.5 (End)'],
+    ['   • For: All other job families'],
+    ['   • Category fixed to Y1'],
+    [''],
+    ['How to use:'],
+    ['1. Select Job Family from dropdown'],
+    ['2. Select Region (US, UK, India)'],
+    ['3. View ranges for all levels (L2 IC through L9 Mgr)'],
+    ['4. Compare market ranges vs internal stats'],
+    [''],
+    ['═══════════════════════════════════════════════════════════════════════════════'],
+    ['🔧 CUSTOM FUNCTIONS (For Formulas)'],
+    ['═══════════════════════════════════════════════════════════════════════════════'],
+    [''],
+    ['Salary Range Functions:'],
+    ['  =SALARY_RANGE(category, region, family, level)'],
+    ['  =SALARY_RANGE_MIN(category, region, family, level)'],
+    ['  =SALARY_RANGE_MID(category, region, family, level)'],
+    ['  =SALARY_RANGE_MAX(category, region, family, level)'],
+    [''],
+    ['Examples:'],
+    ['  =SALARY_RANGE_MIN("X0", "US", "EN.SODE", "L5 IC")  → Returns P25 for X0'],
+    ['  =SALARY_RANGE_MID("Y1", "India", "FI.FINA", "L6 IC")  → Returns P40 for Y1'],
+    [''],
+    ['Aon Percentile Functions:'],
+    ['  =AON_P10(region, family, level)'],
+    ['  =AON_P25(region, family, level)'],
+    ['  =AON_P40(region, family, level)'],
+    ['  =AON_P50(region, family, level)'],
+    ['  =AON_P625(region, family, level)'],
+    ['  =AON_P75(region, family, level)'],
+    ['  =AON_P90(region, family, level)'],
+    [''],
+    ['Internal Stats Function:'],
+    ['  =INTERNAL_STATS(region, family, level)'],
+    ['  Returns: [Min, Median, Max, Employee Count]'],
+    [''],
+    ['═══════════════════════════════════════════════════════════════════════════════'],
+    ['🗺️ MAPPING SHEETS'],
+    ['═══════════════════════════════════════════════════════════════════════════════'],
+    [''],
+    ['Employees Mapped - Maps employees to Aon codes and levels'],
+    ['   Columns: Employee ID, Name, Aon Code, Level, Site, Salary, Status'],
+    ['   Purpose: Define which job family and level each employee belongs to'],
+    ['   Updated: Auto-synced when you run "Import Bob Data"'],
+    [''],
+    ['Job family Descriptions - Maps Aon codes to friendly names'],
+    ['   Columns: Aon Code, Job Family (Exec Description)'],
+    ['   Purpose: Maps EN.SODE → "Software Engineer", FI.FINA → "Finance Analyst"'],
+    ['   Updated: Auto-populated from Aon data'],
+    [''],
+    ['Title Mapping - Maps job titles to Aon codes'],
+    ['   Columns: Job title (live), Job title (Mapped), Job family'],
+    ['   Purpose: Helps suggest mappings for employees'],
+    ['   Updated: Auto-synced when you run "Import Bob Data"'],
+    [''],
+    ['Employee Level Mapping - (Legacy, replaced by Employees Mapped)'],
+    ['   Still present for backward compatibility'],
+    [''],
+    ['Aon Code Remap - Handles Aon vendor code changes'],
+    ['   Example: EN.SOML → EN.AIML (when Aon renames codes)'],
+    [''],
+    ['Lookup - Level mapping and FX rates'],
+    ['   Contains: CIQ Level → Aon Level mapping'],
+    ['   Contains: Region → FX Rate (US=1.0, UK=1.37, India=0.0125)'],
+    [''],
+    ['═══════════════════════════════════════════════════════════════════════════════'],
+    ['🛠️ TOOLS MENU'],
+    ['═══════════════════════════════════════════════════════════════════════════════'],
+    [''],
+    ['💱 Apply Currency Format'],
+    ['   Applies region-appropriate currency formatting ($, £, ₹)'],
+    [''],
+    ['🗑️ Clear All Caches'],
+    ['   Clears cached data (use if calculator shows stale values)'],
+    [''],
+    ['📖 Generate Help Sheet'],
+    ['   Creates/updates this help documentation'],
+    [''],
+    ['ℹ️ Quick Instructions'],
+    ['   Shows quick-start modal dialog'],
+    [''],
+    ['═══════════════════════════════════════════════════════════════════════════════'],
+    ['📝 DATA FLOW'],
+    ['═══════════════════════════════════════════════════════════════════════════════'],
+    [''],
+    ['Aon Region Tabs → Job family Descriptions → Full List'],
+    ['HiBob API → Base Data → Employees Mapped → Full List (internal stats)'],
+    ['Full List → Calculators (via SALARY_RANGE functions)'],
+    ['Full List → Full List USD (via FX rates)'],
+    [''],
+    ['═══════════════════════════════════════════════════════════════════════════════'],
+    ['🐛 TROUBLESHOOTING'],
+    ['═══════════════════════════════════════════════════════════════════════════════'],
+    [''],
+    ['"Prerequisites Missing" Error'],
+    ['   → Run: 🏗️ Fresh Build'],
+    ['   → Check Aon data is pasted in region tabs'],
+    ['   → Check Lookup and Job family Descriptions have data'],
+    [''],
+    ['"Sheet not found" Error'],
+    ['   → Run: 🏗️ Fresh Build'],
+    [''],
+    ['"Missing BOB_ID or BOB_KEY" Error'],
+    ['   → Configure Script Properties (see Step 1 above)'],
+    [''],
+    ['Calculator Shows Old Data'],
+    ['   → Tools → 🗑️ Clear All Caches'],
+    ['   → Run: 📊 Build Market Data'],
+    [''],
+    ['Missing Mappings (red highlighting)'],
+    ['   → Fill in "Employees Mapped" sheet'],
+    ['   → Map Aon Code and Level for each employee'],
+    ['   → Run: 📊 Build Market Data'],
+    [''],
+    ['Formula Returns Blank'],
+    ['   → Check if Full List has data for that combination'],
+    ['   → Check if job family is eligible for X0 or Y1'],
+    ['   → Run: 📊 Build Market Data'],
+    [''],
+    ['═══════════════════════════════════════════════════════════════════════════════'],
+    ['💡 TIPS'],
+    ['═══════════════════════════════════════════════════════════════════════════════'],
+    [''],
+    ['• Fallback logic: If a percentile is missing, system uses next higher percentile'],
+    ['  Example: P10 blank → uses P25 instead'],
+    [''],
+    ['• Full List includes ALL combinations for X0/Y1 families, not just mapped employees'],
+    ['  This ensures you can use the calculator for any role, even if no employees currently exist'],
+    [''],
+    ['• Internal stats (Min/Median/Max/Count) only show where actual employees exist'],
+    [''],
+    ['• Caches expire after 10 minutes to ensure fresh data'],
+    [''],
+    ['• Half-levels (L5.5, L6.5) are calculated by averaging neighboring levels'],
+    [''],
+    ['═══════════════════════════════════════════════════════════════════════════════'],
+    ['📞 NEED MORE HELP?'],
+    ['═══════════════════════════════════════════════════════════════════════════════'],
+    [''],
+    ['See: MENU_FUNCTIONS_GUIDE.md for detailed function descriptions'],
+    ['Version: 3.4.0 - Simplified Workflow'],
+    ['Last Updated: 2025-11-27']
   ];
   sh.getRange(1,1,lines.length,1).setValues(lines.map(r => [r[0]]));
   sh.setColumnWidth(1, 800);
@@ -1556,6 +1707,19 @@ function ensureCategoryPicker_() {
   if (!v || v === 'X1') cell.setValue('X0'); // Default to X0, convert old X1 to X0
 }
 
+function ensureCategoryPickerY1_() {
+  const ss = SpreadsheetApp.getActive();
+  const sh = ss.getSheetByName(UI_SHEET_NAME_Y1);
+  if (!sh) return;
+  const cell = sh.getRange('B3');
+  const rule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(['Y1'], true) // Y1 only for this calculator
+    .setAllowInvalid(false)
+    .build();
+  cell.setDataValidation(rule);
+  cell.setValue('Y1'); // Always Y1
+}
+
 function ensureRegionPicker_() {
   const sh = uiSheet_();
   if (!sh) return;
@@ -1583,7 +1747,11 @@ function ensureExecFamilyPicker_() {
 }
 
 function buildCalculatorUI_() {
-  const sh = uiSheet_(); if (!sh) return;
+  const ss = SpreadsheetApp.getActive();
+  let sh = ss.getSheetByName(UI_SHEET_NAME);
+  if (!sh) {
+    sh = ss.insertSheet(UI_SHEET_NAME);
+  }
   ensureRegionPicker_();
   ensureCategoryPicker_();
   ensureExecFamilyPicker_();
@@ -2244,65 +2412,692 @@ function rebuildFullListTabsWithValidation_() {
   rebuildFullListTabs_();
 }
 
+/********************************
+ * ========================================
+ * HELPER FUNCTIONS FOR SIMPLIFIED WORKFLOW
+ * ========================================
+ ********************************/
+
 /**
- * Creates unified menu when spreadsheet is opened
+ * Creates Employees Mapped sheet for employee → Aon code mapping
+ */
+function createEmployeesMappedSheet_() {
+  const ss = SpreadsheetApp.getActive();
+  let sh = ss.getSheetByName('Employees Mapped');
+  if (!sh) {
+    sh = ss.insertSheet('Employees Mapped');
+  }
+  if (sh.getLastRow() === 0) {
+    sh.getRange(1,1,1,7).setValues([[ 
+      'Employee ID', 
+      'Employee Name',
+      'Aon Code', 
+      'Level', 
+      'Site',
+      'Base Salary',
+      'Status' 
+    ]]);
+    sh.setFrozenRows(1);
+    sh.getRange(1,1,1,7).setFontWeight('bold');
+    sh.autoResizeColumns(1,7);
+  }
+}
+
+/**
+ * Creates Lookup sheet with level mapping and FX rates
+ */
+function createLookupSheet_() {
+  const ss = SpreadsheetApp.getActive();
+  let sh = ss.getSheetByName('Lookup');
+  if (!sh) {
+    sh = ss.insertSheet('Lookup');
+  }
+  if (sh.getLastRow() === 0) {
+    // Headers
+    sh.getRange(1,1,1,6).setValues([[ 
+      'CIQ Level', 
+      'Aon Level Base',
+      'Region',
+      'FX Rate',
+      'Site',
+      'Region Map'
+    ]]);
+    sh.setFrozenRows(1);
+    sh.getRange(1,1,1,6).setFontWeight('bold');
+    
+    // Level mapping data
+    const levelData = [
+      ['L2 IC', '2', '', '', '', ''],
+      ['L3 IC', '3', '', '', '', ''],
+      ['L4 IC', '4', '', '', '', ''],
+      ['L5 IC', '5', '', '', '', ''],
+      ['L5.5 IC', '5.5', '', '', '', ''],
+      ['L6 IC', '6', '', '', '', ''],
+      ['L6.5 IC', '6.5', '', '', '', ''],
+      ['L7 IC', '7', '', '', '', ''],
+      ['L4 Mgr', '4', '', '', '', ''],
+      ['L5 Mgr', '5', '', '', '', ''],
+      ['L5.5 Mgr', '5.5', '', '', '', ''],
+      ['L6 Mgr', '6', '', '', '', ''],
+      ['L6.5 Mgr', '6.5', '', '', '', ''],
+      ['L7 Mgr', '7', '', '', '', ''],
+      ['L8 Mgr', '8', '', '', '', ''],
+      ['L9 Mgr', '9', '', '', '', ''],
+      ['', '', 'US', '1.0', '', ''],
+      ['', '', 'UK', '1.37', '', ''],
+      ['', '', 'India', '0.0125', '', '']
+    ];
+    sh.getRange(2,1,levelData.length,6).setValues(levelData);
+    sh.autoResizeColumns(1,6);
+  }
+}
+
+/**
+ * Creates Y1 calculator UI (Everyone Else)
+ */
+function buildCalculatorUIForY1_() {
+  const ss = SpreadsheetApp.getActive();
+  let sh = ss.getSheetByName('Salary Ranges (Y1)');
+  if (!sh) {
+    sh = ss.insertSheet('Salary Ranges (Y1)');
+  }
+  
+  // Labels
+  sh.getRange('A2').setValue('Job Family');
+  sh.getRange('A3').setValue('Category');
+  sh.getRange('A4').setValue('Region');
+  
+  // Dropdowns - Family picker
+  const execMap = _getExecDescMap_();
+  const families = Array.from(execMap.values()).filter(Boolean);
+  if (families.length) {
+    const rule = SpreadsheetApp.newDataValidation()
+      .requireValueInList(families, true)
+      .build();
+    sh.getRange('B2').setDataValidation(rule);
+  }
+  
+  // Category dropdown - locked to Y1
+  sh.getRange('B3').setValue('Y1');
+  const catRule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(['Y1'], true)
+    .build();
+  sh.getRange('B3').setDataValidation(catRule);
+  
+  // Region dropdown
+  const regRule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(['US', 'UK', 'India'], true)
+    .build();
+  sh.getRange('B4').setDataValidation(regRule);
+  sh.getRange('B4').setValue('US');
+  
+  // Header row
+  sh.getRange('A7').setValue('Level');
+  sh.getRange('B7').setValue('Range Start');
+  sh.getRange('C7').setValue('Range Mid');
+  sh.getRange('D7').setValue('Range End');
+  sh.getRange('F7').setValue('Min');
+  sh.getRange('G7').setValue('Median');
+  sh.getRange('H7').setValue('Max');
+  sh.getRange('L7').setValue('Emp Count');
+  
+  // Level list
+  const levels = ['L2 IC','L3 IC','L4 IC','L5 IC','L5.5 IC','L6 IC','L6.5 IC','L7 IC','L4 Mgr','L5 Mgr','L5.5 Mgr','L6 Mgr','L6.5 Mgr','L7 Mgr','L8 Mgr','L9 Mgr'];
+  sh.getRange(8,1,levels.length,1).setValues(levels.map(s=>[s]));
+  
+  // Formulas
+  const formulasMin = [], formulasMid = [], formulasMax = [];
+  const formulasIntMin = [], formulasIntMed = [], formulasIntMax = [], formulasIntCount = [];
+  
+  levels.forEach((level, i) => {
+    const aRow = 8 + i;
+    formulasMin.push([`=SALARY_RANGE_MIN($B$3,$B$4,$B$2,$A${aRow})`]);
+    formulasMid.push([`=SALARY_RANGE_MID($B$3,$B$4,$B$2,$A${aRow})`]);
+    formulasMax.push([`=SALARY_RANGE_MAX($B$3,$B$4,$B$2,$A${aRow})`]);
+    formulasIntMin.push([`=INDEX(INTERNAL_STATS($B$4,$B$2,$A${aRow}),1,1)`]);
+    formulasIntMed.push([`=INDEX(INTERNAL_STATS($B$4,$B$2,$A${aRow}),1,2)`]);
+    formulasIntMax.push([`=INDEX(INTERNAL_STATS($B$4,$B$2,$A${aRow}),1,3)`]);
+    formulasIntCount.push([`=INDEX(INTERNAL_STATS($B$4,$B$2,$A${aRow}),1,4)`]);
+  });
+  
+  sh.getRange(8, 2, levels.length, 1).setFormulas(formulasMin);
+  sh.getRange(8, 3, levels.length, 1).setFormulas(formulasMid);
+  sh.getRange(8, 4, levels.length, 1).setFormulas(formulasMax);
+  sh.getRange(8, 6, levels.length, 1).setFormulas(formulasIntMin);
+  sh.getRange(8, 7, levels.length, 1).setFormulas(formulasIntMed);
+  sh.getRange(8, 8, levels.length, 1).setFormulas(formulasIntMax);
+  sh.getRange(8,12, levels.length, 1).setFormulas(formulasIntCount);
+  
+  // Format
+  sh.getRange(8,2,levels.length,3).setNumberFormat('$#,##0');
+  sh.getRange(8,6,levels.length,3).setNumberFormat('$#,##0');
+  sh.getRange(8,12,levels.length,1).setNumberFormat('0');
+}
+
+/**
+ * Creates Full List placeholder sheets
+ */
+function createFullListPlaceholders_() {
+  const ss = SpreadsheetApp.getActive();
+  
+  // Full List
+  let sh = ss.getSheetByName('Full List');
+  if (!sh) {
+    sh = ss.insertSheet('Full List');
+  }
+  if (sh.getLastRow() === 0) {
+    sh.getRange(1,1,1,18).setValues([[ 
+      'Site', 'Region', 'Aon Code (base)', 'Job Family (Exec)', 'Category', 'CIQ Level',
+      'P10', 'P25', 'P40', 'P50', 'P62.5', 'P75', 'P90',
+      'Internal Min', 'Internal Median', 'Internal Max', 'Emp Count', 'Key'
+    ]]);
+    sh.setFrozenRows(1);
+    sh.getRange(1,1,1,18).setFontWeight('bold');
+    sh.autoResizeColumns(1,18);
+  }
+  
+  // Full List USD
+  sh = ss.getSheetByName('Full List USD');
+  if (!sh) {
+    sh = ss.insertSheet('Full List USD');
+  }
+  if (sh.getLastRow() === 0) {
+    sh.getRange(1,1,1,18).setValues([[ 
+      'Site', 'Region', 'Aon Code (base)', 'Job Family (Exec)', 'Category', 'CIQ Level',
+      'P10', 'P25', 'P40', 'P50', 'P62.5', 'P75', 'P90',
+      'Internal Min', 'Internal Median', 'Internal Max', 'Emp Count', 'Key'
+    ]]);
+    sh.setFrozenRows(1);
+    sh.getRange(1,1,1,18).setFontWeight('bold');
+    sh.autoResizeColumns(1,18);
+  }
+}
+
+/**
+ * Syncs Employees Mapped sheet with Base Data
+ */
+function syncEmployeesMappedSheet_() {
+  const ss = SpreadsheetApp.getActive();
+  const baseSh = ss.getSheetByName('Base Data');
+  if (!baseSh || baseSh.getLastRow() <= 1) {
+    SpreadsheetApp.getActive().toast('Base Data not found or empty', 'Skipped', 3);
+    return;
+  }
+  
+  const empSh = ss.getSheetByName('Employees Mapped') || ss.insertSheet('Employees Mapped');
+  if (empSh.getLastRow() === 0) {
+    createEmployeesMappedSheet_();
+  }
+  
+  // Get existing mappings
+  const existing = new Map();
+  if (empSh.getLastRow() > 1) {
+    const empVals = empSh.getRange(2,1,empSh.getLastRow()-1,7).getValues();
+    empVals.forEach(row => {
+      if (row[0]) {
+        existing.set(String(row[0]).trim(), {
+          aonCode: row[2] || '',
+          level: row[3] || ''
+        });
+      }
+    });
+  }
+  
+  // Get Base Data
+  const baseVals = baseSh.getDataRange().getValues();
+  if (baseVals.length <= 1) return;
+  
+  const baseHead = baseVals[0].map(h => String(h||''));
+  const iEmpID = baseHead.findIndex(h => /Emp.*ID|Employee.*ID/i.test(h));
+  const iName = baseHead.findIndex(h => /^Name$/i.test(h));
+  const iSite = baseHead.findIndex(h => /Site/i.test(h));
+  const iSalary = baseHead.findIndex(h => /Base.*Pay|Base.*Salary/i.test(h));
+  
+  if (iEmpID < 0) {
+    SpreadsheetApp.getActive().toast('Employee ID column not found in Base Data', 'Error', 5);
+    return;
+  }
+  
+  // Build new rows
+  const rows = [];
+  for (let r = 1; r < baseVals.length; r++) {
+    const row = baseVals[r];
+    const empID = String(row[iEmpID] || '').trim();
+    if (!empID) continue;
+    
+    const name = iName >= 0 ? String(row[iName] || '') : '';
+    const site = iSite >= 0 ? String(row[iSite] || '') : '';
+    const salary = iSalary >= 0 ? row[iSalary] : '';
+    
+    const prev = existing.get(empID);
+    const aonCode = prev ? prev.aonCode : '';
+    const level = prev ? prev.level : '';
+    const status = (aonCode && level) ? 'Mapped' : 'Missing';
+    
+    rows.push([empID, name, aonCode, level, site, salary, status]);
+  }
+  
+  // Write to sheet
+  empSh.getRange(2,1,Math.max(1, empSh.getMaxRows()-1),7).clearContent();
+  if (rows.length) {
+    empSh.getRange(2,1,rows.length,7).setValues(rows);
+  }
+  
+  // Add conditional formatting
+  const rules = empSh.getConditionalFormatRules();
+  const rng = empSh.getRange('C2:D');
+  rules.push(SpreadsheetApp.newConditionalFormatRule()
+    .whenFormulaSatisfied('=AND(LEN($A2)>0,OR(LEN(C2)=0,LEN(D2)=0))')
+    .setBackground('#FDE7E9')
+    .setFontColor('#D32F2F')
+    .setRanges([rng])
+    .build());
+  empSh.setConditionalFormatRules(rules);
+  
+  empSh.autoResizeColumns(1,7);
+  
+  const missingCount = rows.filter(r => r[6] === 'Missing').length;
+  SpreadsheetApp.getActive().toast(`Synced ${rows.length} employees (${missingCount} need mapping)`, 'Employees Mapped', 5);
+}
+
+/**
+ * Syncs Title Mapping sheet with Base Data
+ */
+function syncTitleMapping_() {
+  const ss = SpreadsheetApp.getActive();
+  const baseSh = ss.getSheetByName('Base Data');
+  if (!baseSh || baseSh.getLastRow() <= 1) return;
+  
+  const titleSh = ss.getSheetByName('Title Mapping') || ss.insertSheet('Title Mapping');
+  
+  // Get existing
+  const existing = new Set();
+  if (titleSh.getLastRow() > 1) {
+    const vals = titleSh.getRange(2,1,titleSh.getLastRow()-1,1).getValues();
+    vals.forEach(row => {
+      if (row[0]) existing.add(String(row[0]).trim());
+    });
+  }
+  
+  // Get titles from Base Data
+  const baseVals = baseSh.getDataRange().getValues();
+  const baseHead = baseVals[0].map(h => String(h||''));
+  const iTitle = baseHead.findIndex(h => /Job.*Title/i.test(h));
+  if (iTitle < 0) return;
+  
+  const newTitles = new Set();
+  for (let r = 1; r < baseVals.length; r++) {
+    const title = String(baseVals[r][iTitle] || '').trim();
+    if (title && !existing.has(title)) {
+      newTitles.add(title);
+    }
+  }
+  
+  if (newTitles.size === 0) {
+    SpreadsheetApp.getActive().toast('No new titles to add', 'Title Mapping', 3);
+    return;
+  }
+  
+  const rows = Array.from(newTitles).map(title => [title, '', '']);
+  titleSh.getRange(titleSh.getLastRow()+1, 1, rows.length, 3).setValues(rows);
+  
+  SpreadsheetApp.getActive().toast(`Added ${rows.length} new job titles`, 'Title Mapping', 5);
+  enhanceMappingSheets_();
+}
+
+/**
+ * Builds Full List for ALL X0/Y1 job family/level combinations
+ */
+function rebuildFullListAllCombinations_() {
+  const ss = SpreadsheetApp.getActive();
+  
+  // Get all job families from Job family Descriptions
+  const execMap = _getExecDescMap_();
+  const familiesX0Y1 = Array.from(execMap.keys()).filter(code => {
+    // Determine if this family is X0 or Y1
+    const cat = _effectiveCategoryForFamily_(code);
+    return cat === 'X0' || cat === 'Y1';
+  });
+  
+  if (familiesX0Y1.length === 0) {
+    throw new Error('No X0/Y1 job families found in Job family Descriptions');
+  }
+  
+  // Get all levels
+  const levels = ['L2 IC','L3 IC','L4 IC','L5 IC','L5.5 IC','L6 IC','L6.5 IC','L7 IC','L4 Mgr','L5 Mgr','L5.5 Mgr','L6 Mgr','L6.5 Mgr','L7 Mgr','L8 Mgr','L9 Mgr'];
+  
+  // Get all regions
+  const regions = ['India', 'US', 'UK'];
+  
+  // Build internal index for employee stats
+  const internalIndex = _buildInternalIndex_();
+  
+  // Generate all combinations
+  const rows = [];
+  for (const region of regions) {
+    for (const aonCode of familiesX0Y1) {
+      const execDesc = execMap.get(aonCode) || aonCode;
+      const category = _effectiveCategoryForFamily_(aonCode);
+      
+      for (const ciqLevel of levels) {
+        // Get market percentiles from Aon data
+        const p10 = AON_P10(region, aonCode, ciqLevel);
+        const p25 = AON_P25(region, aonCode, ciqLevel);
+        const p40 = AON_P40(region, aonCode, ciqLevel);
+        const p50 = AON_P50(region, aonCode, ciqLevel);
+        const p625 = AON_P625(region, aonCode, ciqLevel);
+        const p75 = AON_P75(region, aonCode, ciqLevel);
+        const p90 = AON_P90(region, aonCode, ciqLevel);
+        
+        // Get internal stats (if employees exist)
+        const intKey = `${region}|${aonCode}|${ciqLevel}`;
+        const intStats = internalIndex.get(intKey) || { min: '', med: '', max: '', cnt: 0 };
+        
+        const key = `${execDesc}${ciqLevel}${region}`;
+        
+        rows.push([
+          region,       // Site
+          region,       // Region
+          aonCode,      // Aon Code (base)
+          execDesc,     // Job Family (Exec)
+          category,     // Category
+          ciqLevel,     // CIQ Level
+          _toNumber_(p10) || '',
+          _toNumber_(p25) || '',
+          _toNumber_(p40) || '',
+          _toNumber_(p50) || '',
+          _toNumber_(p625) || '',
+          _toNumber_(p75) || '',
+          _toNumber_(p90) || '',
+          intStats.min,
+          intStats.med,
+          intStats.max,
+          intStats.cnt,
+          key
+        ]);
+      }
+    }
+  }
+  
+  // Write to Full List
+  const fullListSh = ss.getSheetByName('Full List') || ss.insertSheet('Full List');
+  fullListSh.clearContents();
+  fullListSh.getRange(1,1,1,18).setValues([[ 
+    'Site', 'Region', 'Aon Code (base)', 'Job Family (Exec)', 'Category', 'CIQ Level',
+    'P10', 'P25', 'P40', 'P50', 'P62.5', 'P75', 'P90',
+    'Internal Min', 'Internal Median', 'Internal Max', 'Emp Count', 'Key'
+  ]]);
+  fullListSh.setFrozenRows(1);
+  fullListSh.getRange(1,1,1,18).setFontWeight('bold');
+  
+  if (rows.length) {
+    fullListSh.getRange(2,1,rows.length,18).setValues(rows);
+  }
+  
+  fullListSh.autoResizeColumns(1,18);
+  
+  // Clear cache
+  CacheService.getDocumentCache().removeAll(['MAP:FULL_LIST']);
+  
+  SpreadsheetApp.getActive().toast(`Generated ${rows.length} combinations for ${familiesX0Y1.length} families`, 'Full List', 5);
+}
+
+/********************************
+ * ========================================
+ * SIMPLIFIED 3-FUNCTION WORKFLOW
+ * ========================================
+ ********************************/
+
+/**
+ * 🏗️ FUNCTION 1: Fresh Build
+ * Creates all required sheets with proper structure
+ * Run this ONCE when setting up a new spreadsheet
+ */
+function freshBuild() {
+  const ui = SpreadsheetApp.getUi();
+  const response = ui.alert(
+    '🏗️ Fresh Build',
+    'This will create all required sheets:\n\n' +
+    '✓ Aon region tabs (India, US, UK)\n' +
+    '✓ Mapping sheets (5 sheets)\n' +
+    '✓ Calculator UIs (X0 and Y1)\n' +
+    '✓ Full List placeholders\n\n' +
+    'Next steps after this:\n' +
+    '1. Paste Aon data into region tabs\n' +
+    '2. Configure HiBob API credentials\n' +
+    '3. Run "Import Bob Data"\n' +
+    '4. Map employees in mapping sheets\n' +
+    '5. Run "Build Market Data"\n\n' +
+    'Continue?',
+    ui.ButtonSet.YES_NO
+  );
+  
+  if (response !== ui.Button.YES) {
+    SpreadsheetApp.getActive().toast('Build cancelled', 'Cancelled', 3);
+    return;
+  }
+  
+  try {
+    const ss = SpreadsheetApp.getActive();
+    
+    // Step 1: Create Aon region tabs
+    SpreadsheetApp.getActive().toast('⏳ Step 1/5: Creating Aon region tabs...', 'Fresh Build', 3);
+    createAonPlaceholderSheets_();
+    Utilities.sleep(500);
+    
+    // Step 2: Create mapping sheets
+    SpreadsheetApp.getActive().toast('⏳ Step 2/5: Creating mapping sheets...', 'Fresh Build', 3);
+    createMappingPlaceholderSheets_();
+    createEmployeesMappedSheet_();
+    Utilities.sleep(500);
+    
+    // Step 3: Create Lookup sheet
+    SpreadsheetApp.getActive().toast('⏳ Step 3/5: Creating Lookup sheet...', 'Fresh Build', 3);
+    createLookupSheet_();
+    Utilities.sleep(500);
+    
+    // Step 4: Create both calculator UIs
+    SpreadsheetApp.getActive().toast('⏳ Step 4/5: Creating calculator UIs...', 'Fresh Build', 3);
+    buildCalculatorUI_();
+    buildCalculatorUIForY1_();
+    Utilities.sleep(500);
+    
+    // Step 5: Create Full List placeholders
+    SpreadsheetApp.getActive().toast('⏳ Step 5/5: Creating Full List placeholders...', 'Fresh Build', 3);
+    createFullListPlaceholders_();
+    
+    // Success message
+    const msg = ui.alert(
+      '✅ Fresh Build Complete!',
+      'All sheets created successfully!\n\n' +
+      '📋 NEXT STEPS:\n\n' +
+      '1️⃣ Paste Aon market data into:\n' +
+      '   • Aon India - 2025\n' +
+      '   • Aon US - 2025\n' +
+      '   • Aon UK - 2025\n\n' +
+      '2️⃣ Configure HiBob API:\n' +
+      '   Extensions → Apps Script → Project Settings → Script Properties\n' +
+      '   Add: BOB_ID and BOB_KEY\n\n' +
+      '3️⃣ Run: 📥 Import Bob Data\n\n' +
+      '4️⃣ Map employees in "Employees Mapped" sheet:\n' +
+      '   (Map each employee to Aon Code + Level)\n\n' +
+      '5️⃣ Run: 📊 Build Market Data\n\n' +
+      'Ready to proceed?',
+      ui.ButtonSet.OK
+    );
+    
+  } catch (e) {
+    ui.alert('❌ Error', 'Fresh Build failed: ' + e.message, ui.ButtonSet.OK);
+  }
+}
+
+/**
+ * 📥 FUNCTION 2: Import Bob Data
+ * Imports employee data from HiBob API
+ * Includes: Base Data, Bonus History, Comp History
+ * Auto-syncs mapping sheets
+ */
+function importBobData() {
+  const ui = SpreadsheetApp.getUi();
+  const response = ui.alert(
+    '📥 Import Bob Data',
+    'This will import employee data from HiBob:\n\n' +
+    '✓ Base Data (employees)\n' +
+    '✓ Bonus History (latest per employee)\n' +
+    '✓ Comp History (latest per employee)\n' +
+    '✓ Auto-sync Employees Mapped sheet\n' +
+    '✓ Auto-sync Title Mapping sheet\n\n' +
+    'Prerequisites:\n' +
+    '• BOB_ID and BOB_KEY configured in Script Properties\n\n' +
+    'Continue?',
+    ui.ButtonSet.YES_NO
+  );
+  
+  if (response !== ui.Button.YES) {
+    SpreadsheetApp.getActive().toast('Import cancelled', 'Cancelled', 3);
+    return;
+  }
+  
+  try {
+    // Step 1: Import Base Data
+    SpreadsheetApp.getActive().toast('⏳ Step 1/5: Importing Base Data...', 'Import Bob Data', 3);
+    importBobDataSimpleWithLookup();
+    Utilities.sleep(1000);
+    
+    // Step 2: Import Bonus History
+    SpreadsheetApp.getActive().toast('⏳ Step 2/5: Importing Bonus History...', 'Import Bob Data', 3);
+    importBobBonusHistoryLatest();
+    Utilities.sleep(1000);
+    
+    // Step 3: Import Comp History
+    SpreadsheetApp.getActive().toast('⏳ Step 3/5: Importing Comp History...', 'Import Bob Data', 3);
+    importBobCompHistoryLatest();
+    Utilities.sleep(1000);
+    
+    // Step 4: Sync Employees Mapped sheet
+    SpreadsheetApp.getActive().toast('⏳ Step 4/5: Syncing Employees Mapped sheet...', 'Import Bob Data', 3);
+    syncEmployeesMappedSheet_();
+    Utilities.sleep(500);
+    
+    // Step 5: Sync Title Mapping
+    SpreadsheetApp.getActive().toast('⏳ Step 5/5: Syncing Title Mapping...', 'Import Bob Data', 3);
+    syncTitleMapping_();
+    
+    // Success
+    const msg = ui.alert(
+      '✅ Import Complete!',
+      'All employee data imported successfully!\n\n' +
+      '📋 NEXT STEPS:\n\n' +
+      '1️⃣ Review "Employees Mapped" sheet\n' +
+      '   Map each employee to:\n' +
+      '   • Aon Code (job family)\n' +
+      '   • Level (L2 IC through L9 Mgr)\n\n' +
+      '2️⃣ Review "Title Mapping" sheet\n' +
+      '   Map job titles to Aon Codes\n\n' +
+      '3️⃣ Run: 📊 Build Market Data\n\n' +
+      'Ready?',
+      ui.ButtonSet.OK
+    );
+    
+  } catch (e) {
+    ui.alert('❌ Error', 'Import failed: ' + e.message, ui.ButtonSet.OK);
+  }
+}
+
+/**
+ * 📊 FUNCTION 3: Build Market Data
+ * Generates Full List and Full List USD from Aon data
+ * Includes ALL job family/level combinations for X0/Y1 categories
+ * Plus internal stats where employees exist
+ */
+function buildMarketData() {
+  const ui = SpreadsheetApp.getUi();
+  const response = ui.alert(
+    '📊 Build Market Data',
+    'This will generate consolidated market data:\n\n' +
+    '✓ Full List (local currency)\n' +
+    '✓ Full List USD (USD converted)\n' +
+    '✓ All combinations for X0/Y1 job families\n' +
+    '✓ Internal stats from employee data\n\n' +
+    'Prerequisites:\n' +
+    '• Aon data pasted in region tabs\n' +
+    '• Lookup sheet configured\n' +
+    '• Job family Descriptions populated\n' +
+    '• Employees mapped in "Employees Mapped"\n\n' +
+    'Continue?',
+    ui.ButtonSet.YES_NO
+  );
+  
+  if (response !== ui.Button.YES) {
+    SpreadsheetApp.getActive().toast('Build cancelled', 'Cancelled', 3);
+    return;
+  }
+  
+  try {
+    // Step 1: Validate prerequisites
+    SpreadsheetApp.getActive().toast('⏳ Step 1/3: Validating prerequisites...', 'Build Market Data', 3);
+    validatePrerequisites_();
+    Utilities.sleep(500);
+    
+    // Step 2: Build Full List (all X0/Y1 combinations)
+    SpreadsheetApp.getActive().toast('⏳ Step 2/3: Building Full List...', 'Build Market Data', 5);
+    rebuildFullListAllCombinations_();
+    Utilities.sleep(1000);
+    
+    // Step 3: Build Full List USD
+    SpreadsheetApp.getActive().toast('⏳ Step 3/3: Building Full List USD...', 'Build Market Data', 3);
+    buildFullListUsd_();
+    
+    // Success
+    const msg = ui.alert(
+      '✅ Market Data Built!',
+      'All market data generated successfully!\n\n' +
+      '📊 SHEETS CREATED:\n' +
+      '• Full List - All market data (local currency)\n' +
+      '• Full List USD - USD converted\n\n' +
+      '📋 YOU CAN NOW:\n' +
+      '• Use "Salary Ranges (X0)" calculator\n' +
+      '• Use "Salary Ranges (Y1)" calculator\n' +
+      '• Analyze market vs internal data\n\n' +
+      '✨ Setup complete!',
+      ui.ButtonSet.OK
+    );
+    
+  } catch (e) {
+    ui.alert('❌ Error', 'Build failed: ' + e.message + '\n\nCheck prerequisites and try again.', ui.ButtonSet.OK);
+  }
+}
+
+/**
+ * Creates simplified menu when spreadsheet is opened
  */
 function onOpen() {
   const ui = SpreadsheetApp.getUi();
   
-  // Main menu
+  // Main menu with 3 core functions
   const menu = ui.createMenu('💰 Salary Ranges Calculator');
   
-  // Setup submenu
-  const setupMenu = ui.createMenu('⚙️ Setup')
-    .addItem('⚡ Quick Setup (Run Once)', 'quickSetup_')
-    .addSeparator()
-    .addItem('📖 Generate Help Sheet', 'buildHelpSheet_')
-    .addItem('🌍 Create Aon Region Tabs', 'createAonPlaceholderSheets_')
-    .addItem('🗺️ Create Mapping Tabs', 'createMappingPlaceholderSheets_')
-    .addItem('📊 Build Calculator UI', 'buildCalculatorUI_')
-    .addSeparator()
-    .addItem('🔧 Manage Exec Mappings', 'openExecMappingManager_')
-    .addItem('✅ Ensure Category Picker', 'ensureCategoryPicker_')
-    .addItem('🎨 Enhance Mapping Sheets', 'enhanceMappingSheets_');
-  
-  // Import submenu  
-  const importMenu = ui.createMenu('📥 Import Data')
-    .addItem('🔄 Import All Bob Data', 'importAllBobData')
-    .addSeparator()
-    .addItem('👥 Import Base Data Only', 'importBobDataSimpleWithLookup')
-    .addItem('💰 Import Bonus Only', 'importBobBonusHistoryLatest')
-    .addItem('📈 Import Comp History Only', 'importBobCompHistoryLatest');
-  
-  // Build submenu
-  const buildMenu = ui.createMenu('🏗️ Build')
-    .addItem('📊 Rebuild Full List (with validation)', 'rebuildFullListTabsWithValidation_')
-    .addItem('💵 Build Full List USD', 'buildFullListUsd_')
-    .addSeparator()
-    .addItem('🌱 Seed All Job Family Mappings', 'seedAllJobFamilyMappings_')
-    .addItem('👥 Sync All Bob Mappings', 'syncAllBobMappings_')
-    .addSeparator()
-    .addItem('🗑️ Clear All Caches', 'clearAllCaches_');
-  
-  // Export submenu
-  const exportMenu = ui.createMenu('📤 Export')
-    .addItem('💼 Export Proposed Ranges', 'exportProposedSalaryRanges_');
+  menu.addItem('🏗️ Fresh Build (Create All Sheets)', 'freshBuild')
+      .addSeparator()
+      .addItem('📥 Import Bob Data', 'importBobData')
+      .addSeparator()
+      .addItem('📊 Build Market Data (Full Lists)', 'buildMarketData')
+      .addSeparator();
   
   // Tools submenu
   const toolsMenu = ui.createMenu('🔧 Tools')
     .addItem('💱 Apply Currency Format', 'applyCurrency_')
-    .addItem('ℹ️ Instructions & Help', 'showInstructions');
+    .addItem('🗑️ Clear All Caches', 'clearAllCaches_')
+    .addSeparator()
+    .addItem('📖 Generate Help Sheet', 'buildHelpSheet_')
+    .addItem('ℹ️ Quick Instructions', 'showInstructions');
   
-  // Add all submenus to main menu
-  menu.addSubMenu(setupMenu)
-      .addSubMenu(importMenu)
-      .addSubMenu(buildMenu)
-      .addSubMenu(exportMenu)
-      .addSubMenu(toolsMenu)
+  menu.addSubMenu(toolsMenu)
       .addToUi();
   
-  // Auto-ensure category picker
+  // Auto-ensure category pickers for both calculators
   ensureCategoryPicker_();
+  ensureCategoryPickerY1_();
 }
 
 /**
