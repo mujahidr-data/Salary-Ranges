@@ -14,19 +14,20 @@
  * - Persistent legacy mapping storage
  * - Interactive calculator UI
  * 
- * @version 4.8.0
+ * @version 4.9.0
  * @date 2025-11-27
- * @changelog v4.8.0 - FEATURE: Rollup data fallback for missing market data
- *   - When direct market data is missing, automatically falls back to rollup codes
- *   - Rollup codes: .R3 (L3 IC/Mgr), .R4 (L4 IC/Mgr), .R5 (L5 IC/Mgr), etc.
- *   - Example: No CS.RSTS.P4? Use CS.RSTS.R4 instead (covers both P4 and M4)
- *   - Two-tier fallback: Direct → Rollup → .5 Level Averaging
- *   - Solves: Rows with internal data but no market data
- *   - _preloadAonData_() now recognizes and stores rollup codes
- *   - rebuildFullListAllCombinations_() tries rollup before averaging
- *   - Logging: "📊 Rollup used: CS.RSTS.R4 for L4 IC → P25=X, P625=Y"
- * @previous v4.7.6 - CRITICAL FIX: Apply Currency Format now works with new calculator
- *   - Fixed header detection to recognize "Range Start/Mid/End"
+ * @changelog v4.9.0 - FEATURE: Market Data Missing detection in Employees Mapped
+ *   - New column P: "Market Data Missing" flags employees with no Aon data
+ *   - Checks during Import Bob Data: region + job family + level
+ *   - Shows: "No US data", "No India data", "No UK data" (or blank if data exists)
+ *   - Red highlighting: Easy to spot employees needing attention
+ *   - Summary in toast: "🔴 Missing Market Data: X employees"
+ *   - Checks both direct data AND rollup data before flagging
+ *   - Example: Employee in US with CS.RSTS at L4 IC → checks CS.RSTS.P4 and CS.RSTS.R4
+ *   - Helps identify: New job families, rare levels, regional gaps
+ *   - Action: Add rollup codes or direct codes to Aon sheets for flagged employees
+ * @previous v4.8.0 - FEATURE: Rollup data fallback for missing market data
+ *   - Automatic rollup code fallback: .R3, .R4, .R5, etc.
  *   - Fixed misleading "0 new mappings" message when updating existing mappings
  *   - Now shows: "X updated, Y new" instead of just "Y new"
  *   - Added change detection: Only updates if Aon Code or Level actually changed
@@ -4275,19 +4276,19 @@ function syncEmployeesMappedSheet_() {
   
   // Create headers if needed
   if (empSh.getLastRow() === 0) {
-    empSh.getRange(1,1,1,15).setValues([[ 
+    empSh.getRange(1,1,1,16).setValues([[ 
       'Employee ID', 'Employee Name', 'Job Title', 'Department', 'Site',
       'Aon Code', 'Job Family (Exec Description)', 'Level', 'Confidence', 'Source', 'Status', 'Base Salary', 'Start Date',
-      'Level Anomaly', 'Title Anomaly'
+      'Level Anomaly', 'Title Anomaly', 'Market Data Missing'
     ]]);
     empSh.setFrozenRows(1);
-    empSh.getRange(1,1,1,15).setFontWeight('bold');
+    empSh.getRange(1,1,1,16).setFontWeight('bold');
   }
   
   // Get existing mappings (preserve approved ones)
   const existing = new Map();
   if (empSh.getLastRow() > 1) {
-    const empVals = empSh.getRange(2,1,empSh.getLastRow()-1,15).getValues();
+    const empVals = empSh.getRange(2,1,empSh.getLastRow()-1,16).getValues();
     empVals.forEach(row => {
       if (row[0]) {
         existing.set(String(row[0]).trim(), {
@@ -4317,6 +4318,10 @@ function syncEmployeesMappedSheet_() {
   const iStart = baseHead.findIndex(h => /Start.*date/i.test(h));
   const iActive = baseHead.findIndex(h => /Active.*Inactive|Status/i.test(h));
   const iTerm = baseHead.findIndex(h => /Termination.*date|Term.*date|End.*date|Leave.*date/i.test(h));
+  
+  // Load Aon data for market data availability check
+  SpreadsheetApp.getActive().toast('Loading Aon data...', 'Sync Mappings', 1);
+  const aonCache = _preloadAonData_();
   
   if (iEmpID < 0) {
     SpreadsheetApp.getActive().toast('Employee ID column not found in Base Data', 'Error', 5);
@@ -4508,7 +4513,37 @@ function syncEmployeesMappedSheet_() {
       }
     }
     
-    rows.push([empID, name, title, dept, site, aonCode, jobFamilyDesc, ciqLevel, confidence, source, status, salary, startDate, levelAnomaly, titleAnomaly]);
+    // Market Data Missing: Check if Aon data exists for this region+family+level
+    let marketDataMissing = '';
+    if (aonCode && ciqLevel && site) {
+      // Normalize site to region (US/USA, India, UK)
+      const region = site === 'USA' ? 'US' : site;
+      
+      // Extract base family code (EN.SODE.P5 → EN.SODE)
+      const familyParts = aonCode.split('.');
+      const baseFamily = familyParts.length >= 2 ? `${familyParts[0]}.${familyParts[1]}` : aonCode;
+      
+      // Check direct lookup first
+      const directKey = `${region}|${baseFamily}|${ciqLevel}`;
+      let hasMarketData = aonCache.has(directKey);
+      
+      // If no direct data, check rollup
+      if (!hasMarketData) {
+        const levelMatch = ciqLevel.match(/L([\d.]+)/);
+        if (levelMatch) {
+          const levelNum = Math.floor(parseFloat(levelMatch[1]));
+          const rollupKey = `${region}|${baseFamily}.R${levelNum}|${ciqLevel}`;
+          hasMarketData = aonCache.has(rollupKey);
+        }
+      }
+      
+      // Flag if no market data found
+      if (!hasMarketData) {
+        marketDataMissing = `No ${region} data`;
+      }
+    }
+    
+    rows.push([empID, name, title, dept, site, aonCode, jobFamilyDesc, ciqLevel, confidence, source, status, salary, startDate, levelAnomaly, titleAnomaly, marketDataMissing]);
   }
   
   // Write to sheet
@@ -4539,14 +4574,14 @@ function syncEmployeesMappedSheet_() {
   rules.push(SpreadsheetApp.newConditionalFormatRule()
     .whenFormulaSatisfied('=$K2="Approved"')
     .setBackground('#D5F5E3')
-    .setRanges([empSh.getRange('A2:O')])
+    .setRanges([empSh.getRange('A2:P')])
     .build());
   
   // Yellow: Needs Review
   rules.push(SpreadsheetApp.newConditionalFormatRule()
     .whenFormulaSatisfied('=$K2="Needs Review"')
     .setBackground('#FFF9C4')
-    .setRanges([empSh.getRange('A2:O')])
+    .setRanges([empSh.getRange('A2:P')])
     .build());
   
   // Red: Rejected or missing mapping
@@ -4554,7 +4589,7 @@ function syncEmployeesMappedSheet_() {
     .whenFormulaSatisfied('=OR($K2="Rejected",AND(LEN($A2)>0,OR(LEN($F2)=0,LEN($H2)=0)))')
     .setBackground('#FDE7E9')
     .setFontColor('#D32F2F')
-    .setRanges([empSh.getRange('A2:O')])
+    .setRanges([empSh.getRange('A2:P')])
     .build());
   
   // Orange: Level Anomaly
@@ -4573,22 +4608,39 @@ function syncEmployeesMappedSheet_() {
     .setRanges([empSh.getRange('O2:O')])
     .build());
   
+  // Red: Market Data Missing
+  rules.push(SpreadsheetApp.newConditionalFormatRule()
+    .whenFormulaSatisfied('=LEN($P2)>0')
+    .setBackground('#FFCDD2')
+    .setFontColor('#B71C1C')
+    .setRanges([empSh.getRange('P2:P')])
+    .build());
+  
     empSh.setConditionalFormatRules(rules);
   } else {
     // Skip formatting - rules already in place and row count similar
     Logger.log(`Skipped conditional formatting (${existingRules.length} rules already present)`);
   }
   
-  empSh.autoResizeColumns(1,15);
+  empSh.autoResizeColumns(1,16);
+  
+  // Count market data issues
+  const marketDataMissingCount = rows.filter(row => row[15] && row[15].length > 0).length; // Column P (index 15)
   
   const totalProcessed = rows.length + filteredCount;
-  const msg = `✅ Synced ${rows.length} employees (${filteredCount} old exits filtered):\n` +
+  let msg = `✅ Synced ${rows.length} employees (${filteredCount} old exits filtered):\n` +
     `✓ Approved: ${approvedCount}\n` +
     `📋 Legacy: ${legacyCount}\n` +
     `🔍 Title-Based: ${titleBasedCount}\n` +
-    `⚠️ Needs Review: ${needsReviewCount}\n\n` +
-    `Filter: Active + exits after Jan 1, 2024\n` +
-    `⚡ Optimized: 80% faster (v4.5.0)`;
+    `⚠️ Needs Review: ${needsReviewCount}\n`;
+  
+  if (marketDataMissingCount > 0) {
+    msg += `🔴 Missing Market Data: ${marketDataMissingCount}\n`;
+  }
+  
+  msg += `\nFilter: Active + exits after Jan 1, 2024\n` +
+         `⚡ Optimized: 80% faster (v4.5.0)`;
+  
   SpreadsheetApp.getActive().toast(msg, 'Employees Mapped ⚡', 10);
 }
 
