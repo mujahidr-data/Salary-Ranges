@@ -53,6 +53,9 @@ const SHEET_NAMES = {
   LOOKUP: "Lookup"
 };
 
+// UI Sheet name constant (used by calculator UI functions)
+const UI_SHEET_NAME = "Salary Ranges";
+
 const REGION_TAB = {
   'India': 'Aon India - 2025',
   'US': 'Aon US - 2025',
@@ -536,7 +539,7 @@ const BASE_DATA_SHEET_NAME = 'Base Data';
  * Small helpers
  ********************************/
 function uiSheet_() { 
-  return SpreadsheetApp.getActive().getSheetByName(UI_SHEET_NAME); 
+  return SpreadsheetApp.getActive().getSheetByName(UI_SHEET_NAME);
 }
 
 // Global cache for lookup map to avoid repeated reads
