@@ -49,14 +49,16 @@ const SHEET_NAMES = {
   BONUS_HISTORY: "Bonus History",
   COMP_HISTORY: "Comp History",
   PERF_RATINGS: "Performance Ratings",
-  SALARY_RANGES: "Salary Ranges",
+  SALARY_RANGES_X0: "Engineering and Product",
+  SALARY_RANGES_Y1: "Everyone Else",
   FULL_LIST: "Full List",
   FULL_LIST_USD: "Full List USD",
   LOOKUP: "Lookup"
 };
 
-// UI Sheet name constant (used by calculator UI functions)
-const UI_SHEET_NAME = "Salary Ranges";
+// UI Sheet name constants (used by calculator UI functions)
+const UI_SHEET_NAME_X0 = "Engineering and Product";  // X0 calculator
+const UI_SHEET_NAME_Y1 = "Everyone Else";  // Y1 calculator
 
 const REGION_TAB = {
   'India': 'Aon India - 2025',
@@ -826,7 +828,7 @@ function AON_P90(region, family, ciqLevel)  { return _aonPick_(region, family, c
 
 /********************************
  * Category-based salary ranges (2 categories only)
- * X0 = Engineering/Product: P25 (start) → P50 (mid) → P90 (end)
+ * X0 = Engineering/Product: P25 (start) → P62.5 (mid) → P90 (end)
  * Y1 = Everyone Else: P10 (start) → P40 (mid) → P62.5 (end)
  * 
  * Fallback logic: If a percentile is missing, use the next higher percentile
@@ -837,9 +839,9 @@ function _rangeByCategory_(category, region, family, ciqLevel) {
   if (!cat) return { min: '', mid: '', max: '' };
 
   if (cat === 'X0') {
-    // X0 (Engineering/Product): Range Start=P25, Range Mid=P50, Range End=P90
+    // X0 (Engineering/Product): Range Start=P25, Range Mid=P62.5, Range End=P90
     let min = AON_P25(region, family, ciqLevel);
-    let mid = AON_P50(region, family, ciqLevel);
+    let mid = AON_P625(region, family, ciqLevel);
     let max = AON_P90(region, family, ciqLevel);
     
     // Fallback: P25 missing → use P40
@@ -847,10 +849,10 @@ function _rangeByCategory_(category, region, family, ciqLevel) {
       min = AON_P40(region, family, ciqLevel);
       if (!min || min === '') min = AON_P50(region, family, ciqLevel);
     }
-    // Fallback: P50 missing → use P625
+    // Fallback: P62.5 missing → use P75
     if (!mid || mid === '') {
-      mid = AON_P625(region, family, ciqLevel);
-      if (!mid || mid === '') mid = AON_P75(region, family, ciqLevel);
+      mid = AON_P75(region, family, ciqLevel);
+      if (!mid || mid === '') mid = AON_P90(region, family, ciqLevel);
     }
     // Fallback: P90 missing → no fallback (already highest)
     
@@ -1932,14 +1934,38 @@ function ensureExecFamilyPicker_() {
   cell.setDataValidation(rule);
 }
 
+/**
+ * Builds calculator UI for X0 (Engineering and Product)
+ * Range: P25 → P62.5 → P90
+ */
 function buildCalculatorUI_() {
   const ss = SpreadsheetApp.getActive();
-  let sh = ss.getSheetByName(UI_SHEET_NAME);
+  let sh = ss.getSheetByName(UI_SHEET_NAME_X0);
   if (!sh) {
-    sh = ss.insertSheet(UI_SHEET_NAME);
+    sh = ss.insertSheet(UI_SHEET_NAME_X0);
   }
   sh.setTabColor('#FF0000'); // Red color for automated sheets
-  ensureExecFamilyPicker_();
+  
+  // Get X0 families only
+  const categoryMap = _getCategoryMap_();
+  const execMap = _getExecDescMap_();
+  const x0Families = [];
+  categoryMap.forEach((cat, code) => {
+    if (cat === 'X0') {
+      const desc = execMap.get(code);
+      if (desc) x0Families.push(desc);
+    }
+  });
+  
+  // Job Family dropdown (X0 families only)
+  if (x0Families.length > 0) {
+    const uniq = Array.from(new Set(x0Families)).sort();
+    const rule = SpreadsheetApp.newDataValidation()
+      .requireValueInList(uniq, true)
+      .setAllowInvalid(false)
+      .build();
+    sh.getRange('B2').setDataValidation(rule);
+  }
 
   // Labels (keeps existing styling; only writes text)
   sh.getRange('A2').setValue('Job Family');
@@ -2174,11 +2200,11 @@ function _getRangeFromFullList_(category, region, family, ciqLevel) {
   if (!rec) return { min:'', mid:'', max:'' };
   const pick = (cat) => {
     // Updated range definitions with fallback logic:
-    // X0 (Engineering/Product): P25 → P50 → P90 (with fallbacks)
+    // X0 (Engineering/Product): P25 → P62.5 → P90 (with fallbacks)
     // Y1 (Everyone Else): P10 → P40 → P62.5 (with fallbacks)
     if (cat === 'X0') {
       const min = rec.p25 || rec.p40 || rec.p50 || '';
-      const mid = rec.p50 || rec.p625 || rec.p75 || '';
+      const mid = rec.p625 || rec.p75 || rec.p90 || '';
       const max = rec.p90 || '';
       return { min, mid, max };
     }
@@ -2840,84 +2866,121 @@ function createLookupSheet_() {
 
 /**
  * Creates Y1 calculator UI (Everyone Else)
+ * Range: P10 → P40 → P62.5
  */
 function buildCalculatorUIForY1_() {
   const ss = SpreadsheetApp.getActive();
-  let sh = ss.getSheetByName('Salary Ranges (Y1)');
+  let sh = ss.getSheetByName(UI_SHEET_NAME_Y1);
   if (!sh) {
-    sh = ss.insertSheet('Salary Ranges (Y1)');
+    sh = ss.insertSheet(UI_SHEET_NAME_Y1);
   }
+  sh.setTabColor('#FF0000'); // Red color for automated sheets
   
-  // Labels
-  sh.getRange('A2').setValue('Job Family');
-  sh.getRange('A3').setValue('Category');
-  sh.getRange('A4').setValue('Region');
-  
-  // Dropdowns - Family picker
+  // Get Y1 families only
+  const categoryMap = _getCategoryMap_();
   const execMap = _getExecDescMap_();
-  const families = Array.from(execMap.values()).filter(Boolean);
-  if (families.length) {
+  const y1Families = [];
+  categoryMap.forEach((cat, code) => {
+    if (cat === 'Y1') {
+      const desc = execMap.get(code);
+      if (desc) y1Families.push(desc);
+    }
+  });
+  
+  // Job Family dropdown (Y1 families only)
+  if (y1Families.length > 0) {
+    const uniq = Array.from(new Set(y1Families)).sort();
     const rule = SpreadsheetApp.newDataValidation()
-      .requireValueInList(families, true)
+      .requireValueInList(uniq, true)
+      .setAllowInvalid(false)
       .build();
     sh.getRange('B2').setDataValidation(rule);
   }
   
-  // Category dropdown - locked to Y1
-  sh.getRange('B3').setValue('Y1');
-  const catRule = SpreadsheetApp.newDataValidation()
-    .requireValueInList(['Y1'], true)
-    .build();
-  sh.getRange('B3').setDataValidation(catRule);
-  
+  // Labels
+  sh.getRange('A2').setValue('Job Family');
+  sh.getRange('A3').setValue('Region');
+  sh.getRange('A4').setValue('Currency');
+
   // Region dropdown
-  const regRule = SpreadsheetApp.newDataValidation()
-    .requireValueInList(['US', 'UK', 'India'], true)
+  const regionRule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(['US', 'India', 'UK'], true)
+    .setAllowInvalid(false)
     .build();
-  sh.getRange('B4').setDataValidation(regRule);
-  sh.getRange('B4').setValue('US');
-  
-  // Header row
+  sh.getRange('B3').setDataValidation(regionRule);
+  if (!sh.getRange('B3').getValue()) sh.getRange('B3').setValue('US');
+
+  // Currency dropdown (Local/USD)
+  const currencyRule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(['Local', 'USD'], true)
+    .setAllowInvalid(false)
+    .build();
+  sh.getRange('B4').setDataValidation(currencyRule);
+  if (!sh.getRange('B4').getValue()) sh.getRange('B4').setValue('Local');
+
+  // Header row - Market Range
   sh.getRange('A7').setValue('Level');
   sh.getRange('B7').setValue('Range Start');
   sh.getRange('C7').setValue('Range Mid');
   sh.getRange('D7').setValue('Range End');
+  
+  // Header row - Internal Range
   sh.getRange('F7').setValue('Min');
   sh.getRange('G7').setValue('Median');
   sh.getRange('H7').setValue('Max');
-  sh.getRange('L7').setValue('Emp Count');
+  sh.getRange('I7').setValue('Emp Count');
+  sh.getRange('J7').setValue('Avg CR');
+  sh.getRange('K7').setValue('TT CR');
+  sh.getRange('L7').setValue('New Hire CR');
+  sh.getRange('M7').setValue('BT CR');
   
   // Level list
   const levels = ['L2 IC','L3 IC','L4 IC','L5 IC','L5.5 IC','L6 IC','L6.5 IC','L7 IC','L4 Mgr','L5 Mgr','L5.5 Mgr','L6 Mgr','L6.5 Mgr','L7 Mgr','L8 Mgr','L9 Mgr'];
   sh.getRange(8,1,levels.length,1).setValues(levels.map(s=>[s]));
   
-  // Formulas
-  const formulasMin = [], formulasMid = [], formulasMax = [];
+  // Formulas (same as X0)
+  const formulasRangeStart = [], formulasRangeMid = [], formulasRangeEnd = [];
   const formulasIntMin = [], formulasIntMed = [], formulasIntMax = [], formulasIntCount = [];
+  const formulasAvgCR = [], formulasTTCR = [], formulasNewHireCR = [], formulasBTCR = [];
   
   levels.forEach((level, i) => {
     const aRow = 8 + i;
-    formulasMin.push([`=SALARY_RANGE_MIN($B$3,$B$4,$B$2,$A${aRow})`]);
-    formulasMid.push([`=SALARY_RANGE_MID($B$3,$B$4,$B$2,$A${aRow})`]);
-    formulasMax.push([`=SALARY_RANGE_MAX($B$3,$B$4,$B$2,$A${aRow})`]);
-    formulasIntMin.push([`=INDEX(INTERNAL_STATS($B$4,$B$2,$A${aRow}),1,1)`]);
-    formulasIntMed.push([`=INDEX(INTERNAL_STATS($B$4,$B$2,$A${aRow}),1,2)`]);
-    formulasIntMax.push([`=INDEX(INTERNAL_STATS($B$4,$B$2,$A${aRow}),1,3)`]);
-    formulasIntCount.push([`=INDEX(INTERNAL_STATS($B$4,$B$2,$A${aRow}),1,4)`]);
+    
+    // Market Range: Currency-aware XLOOKUP
+    formulasRangeStart.push([`=IF($B$4="Local", XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$R:$R,'Full List'!$G:$G,""), XLOOKUP($B$2&$A${aRow}&$B$3,'Full List USD'!$R:$R,'Full List USD'!$G:$G,""))`]);
+    formulasRangeMid.push([`=IF($B$4="Local", XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$R:$R,'Full List'!$J:$J,""), XLOOKUP($B$2&$A${aRow}&$B$3,'Full List USD'!$R:$R,'Full List USD'!$J:$J,""))`]);
+    formulasRangeEnd.push([`=IF($B$4="Local", XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$R:$R,'Full List'!$M:$M,""), XLOOKUP($B$2&$A${aRow}&$B$3,'Full List USD'!$R:$R,'Full List USD'!$M:$M,""))`]);
+    
+    // Internal stats
+    formulasIntMin.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$R:$R,'Full List'!$N:$N,"")`]);
+    formulasIntMed.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$R:$R,'Full List'!$O:$O,"")`]);
+    formulasIntMax.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$R:$R,'Full List'!$P:$P,"")`]);
+    formulasIntCount.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$R:$R,'Full List'!$Q:$Q,"")`]);
+    
+    // CR columns
+    formulasAvgCR.push([`=IFERROR(IF($B$4="USD", AVERAGEIFS('Employees (Mapped)'!$F:$F,'Employees (Mapped)'!$C:$C,$B$2,'Employees (Mapped)'!$D:$D,$A${aRow},'Employees (Mapped)'!$E:$E,$B$3,'Employees (Mapped)'!$D:$D,"<>")/C${aRow}, AVERAGEIFS('Employees (Mapped)'!$F:$F,'Employees (Mapped)'!$C:$C,$B$2,'Employees (Mapped)'!$D:$D,$A${aRow},'Employees (Mapped)'!$E:$E,$B$3,'Employees (Mapped)'!$D:$D,"<>")/C${aRow}),"")`]);
+    formulasTTCR.push([`=IFERROR(IF($B$4="USD", AVERAGEIFS('Employees (Mapped)'!$F:$F,'Employees (Mapped)'!$C:$C,$B$2,'Employees (Mapped)'!$D:$D,$A${aRow},'Employees (Mapped)'!$E:$E,$B$3,'Employees (Mapped)'!$D:$D,"<>")/C${aRow}, AVERAGEIFS('Employees (Mapped)'!$F:$F,'Employees (Mapped)'!$C:$C,$B$2,'Employees (Mapped)'!$D:$D,$A${aRow},'Employees (Mapped)'!$E:$E,$B$3,'Employees (Mapped)'!$D:$D,"<>")/C${aRow}),"")`]);
+    formulasNewHireCR.push([`=IFERROR(IF($B$4="USD", AVERAGEIFS('Employees (Mapped)'!$F:$F,'Employees (Mapped)'!$C:$C,$B$2,'Employees (Mapped)'!$D:$D,$A${aRow},'Employees (Mapped)'!$E:$E,$B$3,'Employees (Mapped)'!$D:$D,"<>")/C${aRow}, AVERAGEIFS('Employees (Mapped)'!$F:$F,'Employees (Mapped)'!$C:$C,$B$2,'Employees (Mapped)'!$D:$D,$A${aRow},'Employees (Mapped)'!$E:$E,$B$3,'Employees (Mapped)'!$D:$D,"<>")/C${aRow}),"")`]);
+    formulasBTCR.push([`=IFERROR(IF($B$4="USD", AVERAGEIFS('Employees (Mapped)'!$F:$F,'Employees (Mapped)'!$C:$C,$B$2,'Employees (Mapped)'!$D:$D,$A${aRow},'Employees (Mapped)'!$E:$E,$B$3,'Employees (Mapped)'!$D:$D,"<>")/C${aRow}, AVERAGEIFS('Employees (Mapped)'!$F:$F,'Employees (Mapped)'!$C:$C,$B$2,'Employees (Mapped)'!$D:$D,$A${aRow},'Employees (Mapped)'!$E:$E,$B$3,'Employees (Mapped)'!$D:$D,"<>")/C${aRow}),"")`]);
   });
   
-  sh.getRange(8, 2, levels.length, 1).setFormulas(formulasMin);
-  sh.getRange(8, 3, levels.length, 1).setFormulas(formulasMid);
-  sh.getRange(8, 4, levels.length, 1).setFormulas(formulasMax);
+  // Set formulas
+  sh.getRange(8, 2, levels.length, 1).setFormulas(formulasRangeStart);
+  sh.getRange(8, 3, levels.length, 1).setFormulas(formulasRangeMid);
+  sh.getRange(8, 4, levels.length, 1).setFormulas(formulasRangeEnd);
   sh.getRange(8, 6, levels.length, 1).setFormulas(formulasIntMin);
   sh.getRange(8, 7, levels.length, 1).setFormulas(formulasIntMed);
   sh.getRange(8, 8, levels.length, 1).setFormulas(formulasIntMax);
-  sh.getRange(8,12, levels.length, 1).setFormulas(formulasIntCount);
+  sh.getRange(8, 9, levels.length, 1).setFormulas(formulasIntCount);
+  sh.getRange(8,10, levels.length, 1).setFormulas(formulasAvgCR);
+  sh.getRange(8,11, levels.length, 1).setFormulas(formulasTTCR);
+  sh.getRange(8,12, levels.length, 1).setFormulas(formulasNewHireCR);
+  sh.getRange(8,13, levels.length, 1).setFormulas(formulasBTCR);
   
   // Format
   sh.getRange(8,2,levels.length,3).setNumberFormat('$#,##0');
   sh.getRange(8,6,levels.length,3).setNumberFormat('$#,##0');
-  sh.getRange(8,12,levels.length,1).setNumberFormat('0');
+  sh.getRange(8,9,levels.length,1).setNumberFormat('0');
 }
 
 /**
@@ -3144,6 +3207,20 @@ function rebuildFullListAllCombinations_() {
         // Key format: JobFamily+Level+Region (for calculator XLOOKUP)
         const key = `${execDesc}${ciqLevel}${region}`;
         
+        // Determine range start/mid/end based on category
+        let rangeStart, rangeMid, rangeEnd;
+        if (category === 'X0') {
+          // X0: P25 → P62.5 → P90
+          rangeStart = _toNumber_(p25) || _toNumber_(p40) || _toNumber_(p50) || '';
+          rangeMid = _toNumber_(p625) || _toNumber_(p75) || _toNumber_(p90) || '';
+          rangeEnd = _toNumber_(p90) || '';
+        } else {
+          // Y1: P10 → P40 → P62.5
+          rangeStart = _toNumber_(p10) || _toNumber_(p25) || _toNumber_(p40) || '';
+          rangeMid = _toNumber_(p40) || _toNumber_(p50) || _toNumber_(p625) || '';
+          rangeEnd = _toNumber_(p625) || _toNumber_(p75) || _toNumber_(p90) || '';
+        }
+        
         rows.push([
           region,       // Site
           region,       // Region
@@ -3158,6 +3235,9 @@ function rebuildFullListAllCombinations_() {
           _toNumber_(p625) || '',
           _toNumber_(p75) || '',
           _toNumber_(p90) || '',
+          rangeStart,   // Range Start (P25 for X0, P10 for Y1)
+          rangeMid,     // Range Mid (P62.5 for X0, P40 for Y1)
+          rangeEnd,     // Range End (P90 for X0, P62.5 for Y1)
           intStats.min,
           intStats.med,
           intStats.max,
@@ -3172,19 +3252,20 @@ function rebuildFullListAllCombinations_() {
   const fullListSh = ss.getSheetByName('Full List') || ss.insertSheet('Full List');
   fullListSh.setTabColor('#FF0000'); // Red color for automated sheets
   fullListSh.clearContents();
-  fullListSh.getRange(1,1,1,18).setValues([[ 
+  fullListSh.getRange(1,1,1,21).setValues([[ 
     'Site', 'Region', 'Aon Code (base)', 'Job Family (Exec)', 'Category', 'CIQ Level',
     'P10', 'P25', 'P40', 'P50', 'P62.5', 'P75', 'P90',
+    'Range Start', 'Range Mid', 'Range End',
     'Internal Min', 'Internal Median', 'Internal Max', 'Emp Count', 'Key'
   ]]);
   fullListSh.setFrozenRows(1);
-  fullListSh.getRange(1,1,1,18).setFontWeight('bold');
+  fullListSh.getRange(1,1,1,21).setFontWeight('bold');
   
   if (rows.length) {
-    fullListSh.getRange(2,1,rows.length,18).setValues(rows);
+    fullListSh.getRange(2,1,rows.length,21).setValues(rows);
   }
   
-  fullListSh.autoResizeColumns(1,18);
+  fullListSh.autoResizeColumns(1,21);
   
   // Clear cache
   CacheService.getDocumentCache().removeAll(['MAP:FULL_LIST']);
@@ -3246,9 +3327,10 @@ function freshBuild() {
     createLookupSheet_();
     Utilities.sleep(500);
     
-    // Step 4: Create calculator UI
-    SpreadsheetApp.getActive().toast('⏳ Step 4/5: Creating calculator UI...', 'Fresh Build', 3);
+    // Step 4: Create both calculator UIs
+    SpreadsheetApp.getActive().toast('⏳ Step 4/5: Creating calculator UIs...', 'Fresh Build', 3);
     buildCalculatorUI_();
+    buildCalculatorUIForY1_();
     Utilities.sleep(500);
     
     // Step 5: Create Full List placeholders
@@ -3451,8 +3533,8 @@ function onOpen() {
   menu.addSubMenu(toolsMenu)
       .addToUi();
   
-  // Auto-ensure pickers for calculator
-  ensureExecFamilyPicker_();
+  // Auto-ensure pickers for both calculators
+  // (Job family dropdowns populated on Fresh Build)
 }
 
 /**
