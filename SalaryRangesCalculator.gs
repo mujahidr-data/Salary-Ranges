@@ -1479,6 +1479,9 @@ function buildFullListUsd_() {
   const cP625 = head.indexOf('P62.5');
   const cP75  = head.indexOf('P75');
   const cP90  = head.indexOf('P90');
+  const cRangeStart = head.indexOf('Range Start');
+  const cRangeMid = head.indexOf('Range Mid');
+  const cRangeEnd = head.indexOf('Range End');
   const cIMin = head.indexOf('Internal Min');
   const cIMed = head.indexOf('Internal Median');
   const cIMax = head.indexOf('Internal Max');
@@ -1490,10 +1493,10 @@ function buildFullListUsd_() {
     const region = String(row[cRegion] || '').trim();
     const fx = fxMap.get(region) || 1;
     const mul = (i) => { if (i >= 0) { const n = toNumber_(row[i]); row[i] = isNaN(n) ? row[i] : n * fx; } };
-    [cP10,cP25,cP40,cP50,cP625,cP75,cP90,cIMin,cIMed,cIMax].forEach(mul);
+    [cP10,cP25,cP40,cP50,cP625,cP75,cP90,cRangeStart,cRangeMid,cRangeEnd,cIMin,cIMed,cIMax].forEach(mul);
     // Round market percentiles to nearest hundred after FX conversion
     const r100 = (i) => { if (i >= 0) { const n = toNumber_(row[i]); if (!isNaN(n)) row[i] = _round100_(n); } };
-    [cP10,cP25,cP40,cP50,cP625,cP75,cP90].forEach(r100);
+    [cP10,cP25,cP40,cP50,cP625,cP75,cP90,cRangeStart,cRangeMid,cRangeEnd].forEach(r100);
     out.push(row);
   }
 
@@ -3013,14 +3016,15 @@ function createFullListPlaceholders_() {
   }
   sh.setTabColor('#FF0000'); // Red color for automated sheets
   if (sh.getLastRow() === 0) {
-    sh.getRange(1,1,1,18).setValues([[ 
+    sh.getRange(1,1,1,21).setValues([[ 
       'Site', 'Region', 'Aon Code (base)', 'Job Family (Exec)', 'Category', 'CIQ Level',
       'P10', 'P25', 'P40', 'P50', 'P62.5', 'P75', 'P90',
+      'Range Start', 'Range Mid', 'Range End',
       'Internal Min', 'Internal Median', 'Internal Max', 'Emp Count', 'Key'
     ]]);
     sh.setFrozenRows(1);
-    sh.getRange(1,1,1,18).setFontWeight('bold');
-    sh.autoResizeColumns(1,18);
+    sh.getRange(1,1,1,21).setFontWeight('bold');
+    sh.autoResizeColumns(1,21);
   }
 }
 
