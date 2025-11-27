@@ -14,9 +14,15 @@
  * - Persistent legacy mapping storage
  * - Interactive calculator UI
  * 
- * @version 4.6.1
+ * @version 4.6.2
  * @date 2025-11-27
- * @changelog v4.6.1 - CRITICAL HOTFIX: Fixed Lookup sheet section detection
+ * @changelog v4.6.2 - CRITICAL HOTFIX: Fixed internal stats (min/med/max/count)
+ *   - Bug: Region key mismatch - internalIndex uses "USA", lookup uses "US"
+ *   - Bug: Property name mismatch - returns `n`, code accesses `cnt`
+ *   - Fix: Normalize region to "USA" before lookup
+ *   - Fix: Changed `intStats.cnt` to `intStats.n`
+ *   - Added debug logging to _buildInternalIndex_()
+ * @previous v4.6.1 - CRITICAL HOTFIX: Fixed Lookup sheet section detection
  *   - Bug: _getExecDescMap_() was reading Level Mapping section ("L5.5 IC" → "Avg of P5 and P6")
  *   - Bug: Full List showed wrong job families, all percentiles = 0
  *   - Fix: Strict section detection with regex validation for Aon codes (XX.YYYY format)
@@ -1353,6 +1359,17 @@ function _buildInternalIndex_() {
     const med = n % 2 ? arr[(n-1)/2] : (arr[n/2 - 1] + arr[n/2]) / 2;
     out.set(key, { min, med, max, n });
   });
+  
+  Logger.log(`Built internal index: ${out.size} combinations with employee data`);
+  // Log first 5 for verification
+  let count = 0;
+  out.forEach((stats, key) => {
+    if (count < 5) {
+      Logger.log(`  ${key} → min=${stats.min}, med=${stats.med}, max=${stats.max}, n=${stats.n}`);
+      count++;
+    }
+  });
+  
   return out;
 }
 
@@ -4920,8 +4937,10 @@ function rebuildFullListAllCombinations_() {
         const p90 = percentiles.p90 || '';
         
         // Get internal stats (if employees exist)
-        const intKey = `${region}|${aonCode}|${ciqLevel}`;
-        const intStats = internalIndex.get(intKey) || { min: '', med: '', max: '', cnt: 0 };
+        // NOTE: _buildInternalIndex_() normalizes "US" to "USA", so we need to match that
+        const intRegion = region === 'US' ? 'USA' : region;
+        const intKey = `${intRegion}|${aonCode}|${ciqLevel}`;
+        const intStats = internalIndex.get(intKey) || { min: '', med: '', max: '', n: 0 };
         
         // Key format: JobFamily+Level+Region (for calculator XLOOKUP)
         const key = `${execDesc}${ciqLevel}${region}`;
@@ -4991,7 +5010,7 @@ function rebuildFullListAllCombinations_() {
           intStats.min,
           intStats.med,
           intStats.max,
-          intStats.cnt,
+          intStats.n,
           crStats.avgCR,      // Avg CR (active employees)
           crStats.ttCR,       // TT CR (AYR 2024 = "HH")
           crStats.newHireCR,  // New Hire CR (Start Date within last 365 days)
