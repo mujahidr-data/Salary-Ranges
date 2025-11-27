@@ -49,16 +49,14 @@ const SHEET_NAMES = {
   BONUS_HISTORY: "Bonus History",
   COMP_HISTORY: "Comp History",
   PERF_RATINGS: "Performance Ratings",
-  SALARY_RANGES_X0: "Salary Ranges (X0)",
-  SALARY_RANGES_Y1: "Salary Ranges (Y1)",
+  SALARY_RANGES: "Salary Ranges",
   FULL_LIST: "Full List",
   FULL_LIST_USD: "Full List USD",
   LOOKUP: "Lookup"
 };
 
-// UI Sheet name constants (used by calculator UI functions)
-const UI_SHEET_NAME = "Salary Ranges (X0)";  // X0 = Engineering/Product
-const UI_SHEET_NAME_Y1 = "Salary Ranges (Y1)";  // Y1 = Everyone Else
+// UI Sheet name constant (used by calculator UI functions)
+const UI_SHEET_NAME = "Salary Ranges";
 
 const REGION_TAB = {
   'India': 'Aon India - 2025',
@@ -244,7 +242,12 @@ function fetchBobReport(reportId, locale = "en-CA") {
  * @returns {Sheet} Sheet object
  */
 function getOrCreateSheet(ss, sheetName) {
-  return ss.getSheetByName(sheetName) || ss.insertSheet(sheetName);
+  let sh = ss.getSheetByName(sheetName);
+  if (!sh) {
+    sh = ss.insertSheet(sheetName);
+    sh.setTabColor('#FF0000'); // Red color for all automated sheets
+  }
+  return sh;
 }
 
 /**
@@ -1493,6 +1496,7 @@ function buildFullListUsd_() {
   }
 
   const dst = ss.getSheetByName('Full List USD') || ss.insertSheet('Full List USD');
+  dst.setTabColor('#FF0000'); // Red color for automated sheets
   dst.clearContents();
   dst.getRange(1,1,out.length,head.length).setValues(out);
   dst.autoResizeColumns(1, head.length);
@@ -1934,24 +1938,31 @@ function buildCalculatorUI_() {
   if (!sh) {
     sh = ss.insertSheet(UI_SHEET_NAME);
   }
-  ensureRegionPicker_();
-  ensureCategoryPicker_();
+  sh.setTabColor('#FF0000'); // Red color for automated sheets
   ensureExecFamilyPicker_();
 
   // Labels (keeps existing styling; only writes text)
   sh.getRange('A2').setValue('Job Family');
-  sh.getRange('A3').setValue('Category');
-  sh.getRange('A4').setValue('Region');
-  sh.getRange('A5').setValue('Currency');
+  sh.getRange('A3').setValue('Region');
+  sh.getRange('A4').setValue('Currency');
+
+  // Region dropdown
+  const regionRule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(['US', 'India', 'UK'], true)
+    .setAllowInvalid(false)
+    .build();
+  sh.getRange('B3').setDataValidation(regionRule);
+  const currentRegion = sh.getRange('B3').getValue();
+  if (!currentRegion) sh.getRange('B3').setValue('US');
 
   // Currency dropdown (Local/USD)
   const currencyRule = SpreadsheetApp.newDataValidation()
     .requireValueInList(['Local', 'USD'], true)
     .setAllowInvalid(false)
     .build();
-  sh.getRange('B5').setDataValidation(currencyRule);
-  const currentCurrency = sh.getRange('B5').getValue();
-  if (!currentCurrency) sh.getRange('B5').setValue('Local');
+  sh.getRange('B4').setDataValidation(currencyRule);
+  const currentCurrency = sh.getRange('B4').getValue();
+  if (!currentCurrency) sh.getRange('B4').setValue('Local');
 
   // Header row - Market Range
   sh.getRange('A7').setValue('Level');
@@ -1983,26 +1994,27 @@ function buildCalculatorUI_() {
     
     // Market Range: Range Start, Range Mid, Range End
     // Currency-aware formulas using XLOOKUP from Full List sheets
-    formulasRangeStart.push([`=IF($B$5="Local", XLOOKUP($B$3&$B$4&$B$2&$A${aRow},'Full List'!$R:$R,'Full List'!$J:$J,""), XLOOKUP($B$3&$B$4&$B$2&$A${aRow},'Full List USD'!$R:$R,'Full List USD'!$J:$J,""))`]);
-    formulasRangeMid.push([`=IF($B$5="Local", XLOOKUP($B$3&$B$4&$B$2&$A${aRow},'Full List'!$R:$R,'Full List'!$K:$K,""), XLOOKUP($B$3&$B$4&$B$2&$A${aRow},'Full List USD'!$R:$R,'Full List USD'!$K:$K,""))`]);
-    formulasRangeEnd.push([`=IF($B$5="Local", XLOOKUP($B$3&$B$4&$B$2&$A${aRow},'Full List'!$R:$R,'Full List'!$M:$M,""), XLOOKUP($B$3&$B$4&$B$2&$A${aRow},'Full List USD'!$R:$R,'Full List USD'!$M:$M,""))`]);
+    // Key format: JobFamily+Level+Region (e.g., "Engineering - Software DevelopmentL5 ICUS")
+    formulasRangeStart.push([`=IF($B$4="Local", XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$R:$R,'Full List'!$G:$G,""), XLOOKUP($B$2&$A${aRow}&$B$3,'Full List USD'!$R:$R,'Full List USD'!$G:$G,""))`]);
+    formulasRangeMid.push([`=IF($B$4="Local", XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$R:$R,'Full List'!$J:$J,""), XLOOKUP($B$2&$A${aRow}&$B$3,'Full List USD'!$R:$R,'Full List USD'!$J:$J,""))`]);
+    formulasRangeEnd.push([`=IF($B$4="Local", XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$R:$R,'Full List'!$M:$M,""), XLOOKUP($B$2&$A${aRow}&$B$3,'Full List USD'!$R:$R,'Full List USD'!$M:$M,""))`]);
     
     // Internal Range: Min, Median, Max, Emp Count
     // Using XLOOKUP from Full List (not currency dependent - always local)
-    formulasIntMin.push([`=XLOOKUP($B$3&$B$4&$B$2&$A${aRow},'Full List'!$R:$R,'Full List'!$N:$N,"")`]);
-    formulasIntMed.push([`=XLOOKUP($B$3&$B$4&$B$2&$A${aRow},'Full List'!$R:$R,'Full List'!$O:$O,"")`]);
-    formulasIntMax.push([`=XLOOKUP($B$3&$B$4&$B$2&$A${aRow},'Full List'!$R:$R,'Full List'!$P:$P,"")`]);
-    formulasIntCount.push([`=XLOOKUP($B$3&$B$4&$B$2&$A${aRow},'Full List'!$R:$R,'Full List'!$Q:$Q,"")`]);
+    formulasIntMin.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$R:$R,'Full List'!$N:$N,"")`]);
+    formulasIntMed.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$R:$R,'Full List'!$O:$O,"")`]);
+    formulasIntMax.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$R:$R,'Full List'!$P:$P,"")`]);
+    formulasIntCount.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$R:$R,'Full List'!$Q:$Q,"")`]);
     
     // Compa Ratio columns - Using dynamic ranges (full columns)
     // Avg CR = Average (Median / Mid-point) if data exists
-    formulasAvgCR.push([`=IFERROR(IF($B$5="USD", AVERAGEIFS('Employees (Mapped)'!$F:$F,'Employees (Mapped)'!$C:$C,$B$2,'Employees (Mapped)'!$D:$D,$A${aRow},'Employees (Mapped)'!$E:$E,$B$4,'Employees (Mapped)'!$D:$D,"<>")/C${aRow}, AVERAGEIFS('Employees (Mapped)'!$F:$F,'Employees (Mapped)'!$C:$C,$B$2,'Employees (Mapped)'!$D:$D,$A${aRow},'Employees (Mapped)'!$E:$E,$B$4,'Employees (Mapped)'!$D:$D,"<>")/C${aRow}),"")`]);
+    formulasAvgCR.push([`=IFERROR(IF($B$4="USD", AVERAGEIFS('Employees (Mapped)'!$F:$F,'Employees (Mapped)'!$C:$C,$B$2,'Employees (Mapped)'!$D:$D,$A${aRow},'Employees (Mapped)'!$E:$E,$B$3,'Employees (Mapped)'!$D:$D,"<>")/C${aRow}, AVERAGEIFS('Employees (Mapped)'!$F:$F,'Employees (Mapped)'!$C:$C,$B$2,'Employees (Mapped)'!$D:$D,$A${aRow},'Employees (Mapped)'!$E:$E,$B$3,'Employees (Mapped)'!$D:$D,"<>")/C${aRow}),"")`]);
     // TT CR = Top Talent CR
-    formulasTTCR.push([`=IFERROR(IF($B$5="USD", AVERAGEIFS('Employees (Mapped)'!$F:$F,'Employees (Mapped)'!$C:$C,$B$2,'Employees (Mapped)'!$D:$D,$A${aRow},'Employees (Mapped)'!$E:$E,$B$4,'Employees (Mapped)'!$D:$D,"<>")/C${aRow}, AVERAGEIFS('Employees (Mapped)'!$F:$F,'Employees (Mapped)'!$C:$C,$B$2,'Employees (Mapped)'!$D:$D,$A${aRow},'Employees (Mapped)'!$E:$E,$B$4,'Employees (Mapped)'!$D:$D,"<>")/C${aRow}),"")`]);
+    formulasTTCR.push([`=IFERROR(IF($B$4="USD", AVERAGEIFS('Employees (Mapped)'!$F:$F,'Employees (Mapped)'!$C:$C,$B$2,'Employees (Mapped)'!$D:$D,$A${aRow},'Employees (Mapped)'!$E:$E,$B$3,'Employees (Mapped)'!$D:$D,"<>")/C${aRow}, AVERAGEIFS('Employees (Mapped)'!$F:$F,'Employees (Mapped)'!$C:$C,$B$2,'Employees (Mapped)'!$D:$D,$A${aRow},'Employees (Mapped)'!$E:$E,$B$3,'Employees (Mapped)'!$D:$D,"<>")/C${aRow}),"")`]);
     // New Hire CR
-    formulasNewHireCR.push([`=IFERROR(IF($B$5="USD", AVERAGEIFS('Employees (Mapped)'!$F:$F,'Employees (Mapped)'!$C:$C,$B$2,'Employees (Mapped)'!$D:$D,$A${aRow},'Employees (Mapped)'!$E:$E,$B$4,'Employees (Mapped)'!$D:$D,"<>")/C${aRow}, AVERAGEIFS('Employees (Mapped)'!$F:$F,'Employees (Mapped)'!$C:$C,$B$2,'Employees (Mapped)'!$D:$D,$A${aRow},'Employees (Mapped)'!$E:$E,$B$4,'Employees (Mapped)'!$D:$D,"<>")/C${aRow}),"")`]);
+    formulasNewHireCR.push([`=IFERROR(IF($B$4="USD", AVERAGEIFS('Employees (Mapped)'!$F:$F,'Employees (Mapped)'!$C:$C,$B$2,'Employees (Mapped)'!$D:$D,$A${aRow},'Employees (Mapped)'!$E:$E,$B$3,'Employees (Mapped)'!$D:$D,"<>")/C${aRow}, AVERAGEIFS('Employees (Mapped)'!$F:$F,'Employees (Mapped)'!$C:$C,$B$2,'Employees (Mapped)'!$D:$D,$A${aRow},'Employees (Mapped)'!$E:$E,$B$3,'Employees (Mapped)'!$D:$D,"<>")/C${aRow}),"")`]);
     // BT CR = Below Talent CR
-    formulasBTCR.push([`=IFERROR(IF($B$5="USD", AVERAGEIFS('Employees (Mapped)'!$F:$F,'Employees (Mapped)'!$C:$C,$B$2,'Employees (Mapped)'!$D:$D,$A${aRow},'Employees (Mapped)'!$E:$E,$B$4,'Employees (Mapped)'!$D:$D,"<>")/C${aRow}, AVERAGEIFS('Employees (Mapped)'!$F:$F,'Employees (Mapped)'!$C:$C,$B$2,'Employees (Mapped)'!$D:$D,$A${aRow},'Employees (Mapped)'!$E:$E,$B$4,'Employees (Mapped)'!$D:$D,"<>")/C${aRow}),"")`]);
+    formulasBTCR.push([`=IFERROR(IF($B$4="USD", AVERAGEIFS('Employees (Mapped)'!$F:$F,'Employees (Mapped)'!$C:$C,$B$2,'Employees (Mapped)'!$D:$D,$A${aRow},'Employees (Mapped)'!$E:$E,$B$3,'Employees (Mapped)'!$D:$D,"<>")/C${aRow}, AVERAGEIFS('Employees (Mapped)'!$F:$F,'Employees (Mapped)'!$C:$C,$B$2,'Employees (Mapped)'!$D:$D,$A${aRow},'Employees (Mapped)'!$E:$E,$B$3,'Employees (Mapped)'!$D:$D,"<>")/C${aRow}),"")`]);
   });
   
   // Batch set all formulas at once (single API call per column)
@@ -2663,6 +2675,7 @@ function createEmployeesMappedSheet_() {
   if (!sh) {
     sh = ss.insertSheet('Employees Mapped');
   }
+  sh.setTabColor('#FF0000'); // Red color for automated sheets
   if (sh.getLastRow() === 0) {
     sh.getRange(1,1,1,7).setValues([[ 
       'Employee ID', 
@@ -2689,6 +2702,7 @@ function createLookupSheet_() {
   if (!sh) {
     sh = ss.insertSheet('Lookup');
   }
+  sh.setTabColor('#FF0000'); // Red color for automated sheets
   
   // Clear existing content
   sh.clearContents();
@@ -2917,6 +2931,7 @@ function createFullListPlaceholders_() {
   if (!sh) {
     sh = ss.insertSheet('Full List');
   }
+  sh.setTabColor('#FF0000'); // Red color for automated sheets
   if (sh.getLastRow() === 0) {
     sh.getRange(1,1,1,18).setValues([[ 
       'Site', 'Region', 'Aon Code (base)', 'Job Family (Exec)', 'Category', 'CIQ Level',
@@ -2933,6 +2948,7 @@ function createFullListPlaceholders_() {
   if (!sh) {
     sh = ss.insertSheet('Full List USD');
   }
+  sh.setTabColor('#FF0000'); // Red color for automated sheets
   if (sh.getLastRow() === 0) {
     sh.getRange(1,1,1,18).setValues([[ 
       'Site', 'Region', 'Aon Code (base)', 'Job Family (Exec)', 'Category', 'CIQ Level',
@@ -3125,6 +3141,7 @@ function rebuildFullListAllCombinations_() {
         const intKey = `${region}|${aonCode}|${ciqLevel}`;
         const intStats = internalIndex.get(intKey) || { min: '', med: '', max: '', cnt: 0 };
         
+        // Key format: JobFamily+Level+Region (for calculator XLOOKUP)
         const key = `${execDesc}${ciqLevel}${region}`;
         
         rows.push([
@@ -3153,6 +3170,7 @@ function rebuildFullListAllCombinations_() {
   
   // Write to Full List
   const fullListSh = ss.getSheetByName('Full List') || ss.insertSheet('Full List');
+  fullListSh.setTabColor('#FF0000'); // Red color for automated sheets
   fullListSh.clearContents();
   fullListSh.getRange(1,1,1,18).setValues([[ 
     'Site', 'Region', 'Aon Code (base)', 'Job Family (Exec)', 'Category', 'CIQ Level',
@@ -3228,10 +3246,9 @@ function freshBuild() {
     createLookupSheet_();
     Utilities.sleep(500);
     
-    // Step 4: Create both calculator UIs
-    SpreadsheetApp.getActive().toast('⏳ Step 4/5: Creating calculator UIs...', 'Fresh Build', 3);
+    // Step 4: Create calculator UI
+    SpreadsheetApp.getActive().toast('⏳ Step 4/5: Creating calculator UI...', 'Fresh Build', 3);
     buildCalculatorUI_();
-    buildCalculatorUIForY1_();
     Utilities.sleep(500);
     
     // Step 5: Create Full List placeholders
@@ -3242,17 +3259,18 @@ function freshBuild() {
     const msg = ui.alert(
       '✅ Fresh Build Complete!',
       'All sheets created successfully!\n\n' +
+      '📋 SHEETS CREATED:\n' +
+      '✓ Lookup (with 71 Aon code mappings)\n' +
+      '✓ Aon region tabs (India, US, UK)\n' +
+      '✓ Employees Mapped\n' +
+      '✓ Mapping sheets (5 sheets)\n' +
+      '✓ Salary Ranges calculator\n' +
+      '✓ Full List placeholders\n\n' +
       '📋 NEXT STEPS:\n\n' +
-      '1️⃣ Paste Aon market data into:\n' +
-      '   • Aon India - 2025\n' +
-      '   • Aon US - 2025\n' +
-      '   • Aon UK - 2025\n\n' +
-      '2️⃣ Configure HiBob API:\n' +
-      '   Extensions → Apps Script → Project Settings → Script Properties\n' +
-      '   Add: BOB_ID and BOB_KEY\n\n' +
-      '3️⃣ Run: 📥 Import Bob Data\n\n' +
-      '4️⃣ Map employees in "Employees Mapped" sheet:\n' +
-      '   (Map each employee to Aon Code + Level)\n\n' +
+      '1️⃣ Paste Aon market data into region tabs\n' +
+      '2️⃣ Configure HiBob API (BOB_ID and BOB_KEY)\n' +
+      '3️⃣ Run: 📥 Import Bob Data\n' +
+      '4️⃣ Map employees in "Employees Mapped" sheet\n' +
       '5️⃣ Run: 📊 Build Market Data\n\n' +
       'Ready to proceed?',
       ui.ButtonSet.OK
@@ -3433,9 +3451,8 @@ function onOpen() {
   menu.addSubMenu(toolsMenu)
       .addToUi();
   
-  // Auto-ensure category pickers for both calculators
-  ensureCategoryPicker_();
-  ensureCategoryPickerY1_();
+  // Auto-ensure pickers for calculator
+  ensureExecFamilyPicker_();
 }
 
 /**
