@@ -2021,19 +2021,16 @@ function buildCalculatorUI_() {
   levels.forEach((level, i) => {
     const aRow = 8 + i;
     
-    // Market Range: Range Start, Range Mid, Range End
-    // Currency-aware formulas using XLOOKUP from Full List sheets
-    // Key format: JobFamily+Level+Region (e.g., "Engineering - Software DevelopmentL5 ICUS")
-    formulasRangeStart.push([`=IF($B$4="Local", XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$R:$R,'Full List'!$G:$G,""), XLOOKUP($B$2&$A${aRow}&$B$3,'Full List USD'!$R:$R,'Full List USD'!$G:$G,""))`]);
-    formulasRangeMid.push([`=IF($B$4="Local", XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$R:$R,'Full List'!$J:$J,""), XLOOKUP($B$2&$A${aRow}&$B$3,'Full List USD'!$R:$R,'Full List USD'!$J:$J,""))`]);
-    formulasRangeEnd.push([`=IF($B$4="Local", XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$R:$R,'Full List'!$M:$M,""), XLOOKUP($B$2&$A${aRow}&$B$3,'Full List USD'!$R:$R,'Full List USD'!$M:$M,""))`]);
+    // Market Range: Currency-aware XLOOKUP (Column N=Range Start, O=Range Mid, P=Range End)
+    formulasRangeStart.push([`=IF($B$4="Local", XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$U:$U,'Full List'!$N:$N,""), XLOOKUP($B$2&$A${aRow}&$B$3,'Full List USD'!$U:$U,'Full List USD'!$N:$N,""))`]);
+    formulasRangeMid.push([`=IF($B$4="Local", XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$U:$U,'Full List'!$O:$O,""), XLOOKUP($B$2&$A${aRow}&$B$3,'Full List USD'!$U:$U,'Full List USD'!$O:$O,""))`]);
+    formulasRangeEnd.push([`=IF($B$4="Local", XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$U:$U,'Full List'!$P:$P,""), XLOOKUP($B$2&$A${aRow}&$B$3,'Full List USD'!$U:$U,'Full List USD'!$P:$P,""))`]);
     
-    // Internal Range: Min, Median, Max, Emp Count
-    // Using XLOOKUP from Full List (not currency dependent - always local)
-    formulasIntMin.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$R:$R,'Full List'!$N:$N,"")`]);
-    formulasIntMed.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$R:$R,'Full List'!$O:$O,"")`]);
-    formulasIntMax.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$R:$R,'Full List'!$P:$P,"")`]);
-    formulasIntCount.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$R:$R,'Full List'!$Q:$Q,"")`]);
+    // Internal stats (Column Q=Internal Min, R=Median, S=Max, T=Emp Count)
+    formulasIntMin.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$U:$U,'Full List'!$Q:$Q,"")`]);
+    formulasIntMed.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$U:$U,'Full List'!$R:$R,"")`]);
+    formulasIntMax.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$U:$U,'Full List'!$S:$S,"")`]);
+    formulasIntCount.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$U:$U,'Full List'!$T:$T,"")`]);
     
     // Compa Ratio columns - Using dynamic ranges (full columns)
     // Avg CR = Average (Median / Mid-point) if data exists
