@@ -14,9 +14,14 @@
  * - Persistent legacy mapping storage
  * - Interactive calculator UI
  * 
- * @version 4.7.4
+ * @version 4.7.5
  * @date 2025-11-27
- * @changelog v4.7.4 - Enhanced: Update Legacy Mappings with change detection
+ * @changelog v4.7.5 - Data: Update HR.TMTA → HR.TATA (job family code change)
+ *   - Renamed all instances of HR.TMTA to HR.TATA
+ *   - Updated 11 legacy mappings (employee assignments)
+ *   - Updated 1 Lookup sheet entry (job family description)
+ *   - Affects: HR - Talent Acquisition job family
+ * @previous v4.7.4 - Enhanced: Update Legacy Mappings with change detection
  *   - Fixed misleading "0 new mappings" message when updating existing mappings
  *   - Now shows: "X updated, Y new" instead of just "Y new"
  *   - Added change detection: Only updates if Aon Code or Level actually changed
@@ -2954,13 +2959,13 @@ function _getLegacyMappingData_() {
     '20242': ['EN.SODE', 'EN.SODE.P3'],
     '20243': ['EN.SODE', 'EN.SODE.P5'],
     '20244': ['TE.DADA', 'TE.DADA.P3'],
-    '20245': ['HR.TMTA', 'HR.TMTA.P4'],
+    '20245': ['HR.TATA', 'HR.TATA.P4'],
     '20246': ['HR.GLGL', 'HR.GLGL.P5'],
     '20248': ['TE.DADA', 'TE.DADA.P3'],
     '20250': ['EN.PGPG', 'EN.PGPG.P5'],
     '20251': ['TE.DADS', 'TE.DADS.P3'],
     '20252': ['EN.SODE', 'EN.SODE.M5'],
-    '20253': ['HR.TMTA', 'HR.TMTA.P6'],
+    '20253': ['HR.TATA', 'HR.TATA.P6'],
     '20254': ['TE.DADS', 'TE.DADS.P4'],
     '20255': ['EN.UUUD', 'EN.UUUD.P4'],
     '20256': ['EN.SODE', 'EN.SODE.M5'],
@@ -3222,7 +3227,7 @@ function _getLegacyMappingData_() {
     '20546': ['EN.SODE', 'EN.SODE.P5'],
     '20547': ['EN.SODE', 'EN.SODE.P4'],
     '20548': ['EN.SODE', 'EN.SODE.P4'],
-    '20549': ['HR.TMTA', 'HR.TMTA.P5'],
+    '20549': ['HR.TATA', 'HR.TATA.P5'],
     '20550': ['EN.AIML', 'EN.AIML.P4'],
     '20551': ['EN.SODE', 'EN.SODE.M6'],
     '20552': ['EN.SODE', 'EN.SODE.P4'],
@@ -3398,7 +3403,7 @@ function _getLegacyMappingData_() {
     '195462': ['SA.CRCS', 'SA.CRCS.P6'],
     '196193': ['SA.CRCS', 'SA.CRCS.M5'],
     '196295': ['SP.SPMF', 'SP.SPMF.E1'],
-    '196621': ['HR.TMTA', 'HR.TMTA.M5'],
+    '196621': ['HR.TATA', 'HR.TATA.M5'],
     '196968': ['SA.FAF1', 'SA.FAF1.P5'],
     '197271': ['FI.CNCE', 'FI.CNCE.E1'],
     '197388': ['HR.ARIS', 'HR.ARIS.P5'],
@@ -3418,13 +3423,13 @@ function _getLegacyMappingData_() {
     '199357': ['SA.CRCS', 'SA.CRCS.P6'],
     '199358': ['SA.CRCS', 'SA.CRCS.P5'],
     '199360': ['SA.CRCS', 'SA.CRCS.P5'],
-    '199364': ['HR.TMTA', 'HR.TMTA.P4'],
+    '199364': ['HR.TATA', 'HR.TATA.P4'],
     '199369': ['SA.CRCS', 'SA.CRCS.P5'],
     '199370': ['SA.ASRS', 'SA.ASRS.M6'],
     '199376': ['SA.CRCS', 'SA.CRCS.M6'],
     '199380': ['FI.ACCO', 'FI.ACCO.M5'],
     '199383': ['SA.OPSO', 'SA.OPSO.P6'],
-    '199384': ['HR.TMTA', 'HR.TMTA.P5'],
+    '199384': ['HR.TATA', 'HR.TATA.P5'],
     '199386': ['SA.FAF1', 'SA.FAF1.P6'],
     '199387': ['MK.PIPM', 'MK.PIPM.P6'],
     '199389': ['SA.CRCS', 'SA.CRCS.P5'],
@@ -3487,18 +3492,18 @@ function _getLegacyMappingData_() {
     '199453': ['SA.CRCS', 'SA.CRCS.M5'],
     '199454': ['SA.CRCS', 'SA.CRCS.P5'],
     '199455': ['SA.CRCS', 'SA.CRCS.P5'],
-    '199456': ['HR.TMTA', 'HR.TMTA.P4'],
+    '199456': ['HR.TATA', 'HR.TATA.P4'],
     '199457': ['SA.CRCS', 'SA.CRCS.M5'],
     '199458': ['SA.CRCS', 'SA.CRCS.P5'],
-    '199459': ['HR.TMTA', 'HR.TMTA.M5'],
+    '199459': ['HR.TATA', 'HR.TATA.M5'],
     '199460': ['FI.GLFI', 'FI.GLFI.E5'],
-    '199461': ['HR.TMTA', 'HR.TMTA.P6'],
+    '199461': ['HR.TATA', 'HR.TATA.P6'],
     '199462': ['SA.FAF1', 'SA.FAF1.P6'],
     '199463': ['SP.BOBI', 'SP.BOBI.P5'],
     '199464': ['FI.ACGA', 'FI.ACGA.P5'],
     '199465': ['FI.ACGA', 'FI.ACGA.P4'],
     '199466': ['SA.CRCS', 'SA.CRCS.P6'],
-    '199467': ['HR.TMTA', 'HR.TMTA.P5'],
+    '199467': ['HR.TATA', 'HR.TATA.P5'],
     '199468': ['MK.GLHD', 'MK.GLHD.E5'],
     '199469': ['SA.FAF1', 'SA.FAF1.P6'],
     '199470': ['LG.GLMF', 'LG.GLMF.E1'],
@@ -3510,7 +3515,7 @@ function _getLegacyMappingData_() {
     '199476': ['TE.DADA', 'TE.DADA.P6'],
     '199477': ['SA.FAF1', 'SA.FAF1.P6'],
     '199478': ['EN.PMPD', 'EN.PMPD.M6'],
-    '199479': ['HR.TMTA', 'HR.TMTA.M6'],
+    '199479': ['HR.TATA', 'HR.TATA.M6'],
     '199480': ['SA.CRCS', 'SA.CRCS.P6'],
     '199481': ['SA.CRCE', 'SA.CRCE.E1'],
     '199482': ['SA.CRCS', 'SA.CRCS.M5'],
@@ -3980,7 +3985,7 @@ function createLookupSheet_() {
     ['HR.GLMF', 'HR - Leadership/CHRO', 'Y1'],
     ['HR.SSHR', 'HR - Specialist/Shared Services', 'Y1'],
     ['HR.GL00', 'HR - Strategy (Multi Focus)', 'Y1'],
-    ['HR.TMTA', 'HR - Talent Acquisition', 'Y1'],
+    ['HR.TATA', 'HR - Talent Acquisition', 'Y1'],
     ['HR.TATA', 'HR - Talent Acquisition', 'Y1'],
     ['CB.ADAA', 'HR - Workplace Services', 'Y1'],
     ['CB.ASAS', 'HR - Workplace Services', 'Y1'],
