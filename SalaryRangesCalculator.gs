@@ -3776,8 +3776,14 @@ function _seedTitleMappingFromLegacy_() {
   const baseSh = ss.getSheetByName(SHEET_NAMES.BASE_DATA);
   const legacySh = ss.getSheetByName(SHEET_NAMES.LEGACY_MAPPINGS);
   
-  if (!baseSh || baseSh.getLastRow() <= 1) return;
-  if (!legacySh || legacySh.getLastRow() <= 1) return;
+  if (!baseSh || baseSh.getLastRow() <= 1) {
+    SpreadsheetApp.getActive().toast('Base Data not found or empty - Title Mapping seeding skipped', 'Warning', 5);
+    return;
+  }
+  if (!legacySh || legacySh.getLastRow() <= 1) {
+    SpreadsheetApp.getActive().toast('Legacy Mappings not found or empty - Title Mapping seeding skipped', 'Warning', 5);
+    return;
+  }
   
   // Get Base Data (EmpID → Title)
   const baseVals = baseSh.getDataRange().getValues();
@@ -3866,13 +3872,18 @@ function _seedTitleMappingFromLegacy_() {
   if (titleMappings.length) {
     titleSh.getRange(2,1,titleMappings.length,4).setValues(titleMappings);
     titleSh.autoResizeColumns(1,4);
+    SpreadsheetApp.getActive().toast(
+      `✅ Title Mapping seeded: ${titleMappings.length} unique titles from legacy data`,
+      'Title Mapping',
+      5
+    );
+  } else {
+    SpreadsheetApp.getActive().toast(
+      '⚠️ No title mappings found - check that Legacy Mappings has valid data',
+      'Title Mapping',
+      5
+    );
   }
-  
-  SpreadsheetApp.getActive().toast(
-    `Title Mapping seeded: ${titleMappings.length} titles`,
-    'Title Mapping',
-    3
-  );
 }
 
 /**
