@@ -4248,10 +4248,92 @@ function freshBuild() {
 }
 
 /**
- * 📥 FUNCTION 2: Import Bob Data
- * Imports employee data from HiBob API
- * Includes: Base Data, Bonus History, Comp History
- * Auto-syncs mapping sheets
+ * 📥 FUNCTION 2A: Import Bob Data (Headless - Time-based trigger compatible)
+ * Imports employee data from HiBob API without user interaction
+ * Can be called manually or via time-based trigger
+ */
+function importBobDataHeadless() {
+  const timestamp = new Date().toISOString();
+  Logger.log(`[${timestamp}] Starting Bob Data Import (Headless)`);
+  
+  try {
+    // Step 1: Import Base Data
+    Logger.log('Step 1/8: Importing Base Data...');
+    importBobDataSimpleWithLookup();
+    Utilities.sleep(1000);
+    
+    // Step 2: Import Bonus History
+    Logger.log('Step 2/8: Importing Bonus History...');
+    importBobBonusHistoryLatest();
+    Utilities.sleep(1000);
+    
+    // Step 3: Import Comp History
+    Logger.log('Step 3/8: Importing Comp History...');
+    importBobCompHistoryLatest();
+    Utilities.sleep(1000);
+    
+    // Step 4: Import Performance Ratings
+    Logger.log('Step 4/8: Importing Performance Ratings...');
+    importBobPerformanceRatings();
+    Utilities.sleep(1000);
+    
+    // Step 5: Seed Title Mapping from Legacy (MUST run before Employees Mapped sync)
+    Logger.log('Step 5/8: Seeding Title Mapping from legacy data...');
+    _seedTitleMappingFromLegacy_();
+    Utilities.sleep(500);
+    
+    // Step 6: Sync Employees Mapped with smart logic (uses Title Mapping for suggestions)
+    Logger.log('Step 6/8: Syncing Employees Mapped (smart mapping)...');
+    syncEmployeesMappedSheet_();
+    Utilities.sleep(500);
+    
+    // Step 7: Refine Title Mapping from approved mappings
+    Logger.log('Step 7/8: Refining Title Mapping...');
+    syncTitleMapping_();
+    Utilities.sleep(500);
+    
+    // Step 8: Update Legacy Mappings from approved entries (feedback loop)
+    Logger.log('Step 8/8: Updating Legacy Mappings from approved entries...');
+    updateLegacyMappingsFromApproved_();
+    Utilities.sleep(500);
+    
+    Logger.log(`[${new Date().toISOString()}] Bob Data Import Complete - Success`);
+    
+    // Add timestamp to tracking cell
+    const ss = SpreadsheetApp.getActive();
+    const metaSh = ss.getSheetByName('Base Data');
+    if (metaSh) {
+      // Store last import timestamp in cell beyond data range
+      metaSh.getRange('ZZ1').setValue(`Last Import: ${new Date().toLocaleString()}`);
+    }
+    
+    return { success: true, timestamp: new Date() };
+    
+  } catch (e) {
+    Logger.log(`[${new Date().toISOString()}] Bob Data Import FAILED: ${e.message}`);
+    Logger.log(e.stack);
+    
+    // Send email notification on failure (optional - requires authorization)
+    try {
+      const email = Session.getActiveUser().getEmail();
+      if (email) {
+        MailApp.sendEmail({
+          to: email,
+          subject: '⚠️ Bob Data Import Failed',
+          body: `Import failed at ${new Date().toLocaleString()}\n\nError: ${e.message}\n\nStack: ${e.stack}`
+        });
+      }
+    } catch (mailError) {
+      Logger.log('Failed to send error notification email: ' + mailError.message);
+    }
+    
+    throw e;
+  }
+}
+
+/**
+ * 📥 FUNCTION 2B: Import Bob Data (Manual - with UI prompts)
+ * Interactive version for manual use from menu
  */
 function importBobData() {
   const ui = SpreadsheetApp.getUi();
@@ -4277,45 +4359,10 @@ function importBobData() {
   }
   
   try {
-    // Step 1: Import Base Data
-    SpreadsheetApp.getActive().toast('⏳ Step 1/6: Importing Base Data...', 'Import Bob Data', 3);
-    importBobDataSimpleWithLookup();
-    Utilities.sleep(1000);
+    SpreadsheetApp.getActive().toast('⏳ Starting import...', 'Import Bob Data', 3);
     
-    // Step 2: Import Bonus History
-    SpreadsheetApp.getActive().toast('⏳ Step 2/6: Importing Bonus History...', 'Import Bob Data', 3);
-    importBobBonusHistoryLatest();
-    Utilities.sleep(1000);
-    
-    // Step 3: Import Comp History
-    SpreadsheetApp.getActive().toast('⏳ Step 3/6: Importing Comp History...', 'Import Bob Data', 3);
-    importBobCompHistoryLatest();
-    Utilities.sleep(1000);
-    
-    // Step 4: Import Performance Ratings
-    SpreadsheetApp.getActive().toast('⏳ Step 4/8: Importing Performance Ratings...', 'Import Bob Data', 3);
-    importBobPerformanceRatings();
-    Utilities.sleep(1000);
-    
-    // Step 5: Seed Title Mapping from Legacy (MUST run before Employees Mapped sync)
-    SpreadsheetApp.getActive().toast('⏳ Step 5/8: Seeding Title Mapping from legacy data...', 'Import Bob Data', 3);
-    _seedTitleMappingFromLegacy_();
-    Utilities.sleep(500);
-    
-    // Step 6: Sync Employees Mapped with smart logic (uses Title Mapping for suggestions)
-    SpreadsheetApp.getActive().toast('⏳ Step 6/8: Syncing Employees Mapped (smart mapping)...', 'Import Bob Data', 3);
-    syncEmployeesMappedSheet_();
-    Utilities.sleep(500);
-    
-    // Step 7: Refine Title Mapping from approved mappings
-    SpreadsheetApp.getActive().toast('⏳ Step 7/8: Refining Title Mapping...', 'Import Bob Data', 3);
-    syncTitleMapping_();
-    Utilities.sleep(500);
-    
-    // Step 8: Update Legacy Mappings from approved entries (feedback loop)
-    SpreadsheetApp.getActive().toast('⏳ Step 8/8: Updating Legacy Mappings from approved entries...', 'Import Bob Data', 3);
-    updateLegacyMappingsFromApproved_();
-    Utilities.sleep(500);
+    // Call the headless version
+    const result = importBobDataHeadless();
     
     // Success
     const msg = ui.alert(
@@ -4424,6 +4471,9 @@ function onOpen() {
   
   // Tools submenu
   const toolsMenu = ui.createMenu('🔧 Tools')
+    .addItem('⏰ Import Bob Data (Headless)', 'importBobDataHeadless')
+    .addItem('🔔 Setup Daily Import Trigger', 'setupDailyImportTrigger')
+    .addSeparator()
     .addItem('💱 Apply Currency Format', 'applyCurrency_')
     .addItem('🗑️ Clear All Caches', 'clearAllCaches_')
     .addSeparator()
@@ -4441,6 +4491,75 @@ function onOpen() {
   
   // Auto-ensure pickers for both calculators
   // (Job family dropdowns populated on Fresh Build)
+}
+
+/**
+ * Sets up a daily time-based trigger for automatic Bob data imports
+ * Run this once to enable daily automated imports
+ */
+function setupDailyImportTrigger() {
+  const ui = SpreadsheetApp.getUi();
+  
+  // Check if trigger already exists
+  const triggers = ScriptApp.getProjectTriggers();
+  const existingTrigger = triggers.find(t => t.getHandlerFunction() === 'importBobDataHeadless');
+  
+  if (existingTrigger) {
+    const response = ui.alert(
+      '⏰ Daily Import Trigger Already Exists',
+      'A daily trigger is already set up.\n\n' +
+      'Current time: ' + (existingTrigger.getTriggerSource() === ScriptApp.TriggerSource.CLOCK ? 
+        'Daily at ' + existingTrigger.getTriggerSourceId() : 'Configured') + '\n\n' +
+      'Do you want to DELETE the existing trigger?',
+      ui.ButtonSet.YES_NO
+    );
+    
+    if (response === ui.Button.YES) {
+      ScriptApp.deleteTrigger(existingTrigger);
+      ui.alert('✅ Trigger Deleted', 'The daily import trigger has been removed.', ui.ButtonSet.OK);
+    }
+    return;
+  }
+  
+  // Create new trigger
+  const response = ui.alert(
+    '⏰ Setup Daily Import Trigger',
+    'This will automatically import Bob data every day.\n\n' +
+    'Runs at: 6:00 AM - 7:00 AM (your timezone)\n' +
+    'Function: importBobDataHeadless()\n\n' +
+    'Benefits:\n' +
+    '• Always up-to-date employee data\n' +
+    '• No manual intervention needed\n' +
+    '• Email notification on failures\n\n' +
+    'Continue?',
+    ui.ButtonSet.YES_NO
+  );
+  
+  if (response !== ui.Button.YES) {
+    ui.alert('Cancelled', 'No trigger was created.', ui.ButtonSet.OK);
+    return;
+  }
+  
+  try {
+    ScriptApp.newTrigger('importBobDataHeadless')
+      .timeBased()
+      .everyDays(1)
+      .atHour(6)
+      .create();
+    
+    ui.alert(
+      '✅ Trigger Created!',
+      'Daily import trigger has been set up successfully!\n\n' +
+      '⏰ Schedule: Every day at 6:00-7:00 AM\n' +
+      '📧 Email: You\'ll receive notifications on failures\n' +
+      '📊 Tracking: Check Base Data cell ZZ1 for last import time\n\n' +
+      'To delete this trigger:\n' +
+      'Menu → Tools → Setup Daily Import Trigger (again)',
+      ui.ButtonSet.OK
+    );
+  } catch (e) {
+    ui.alert('❌ Error', 'Failed to create trigger: ' + e.message, ui.ButtonSet.OK);
+  }
 }
 
 /**
