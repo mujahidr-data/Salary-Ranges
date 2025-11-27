@@ -14,9 +14,14 @@
  * - Persistent legacy mapping storage
  * - Interactive calculator UI
  * 
- * @version 4.6.2
+ * @version 4.6.3-debug
  * @date 2025-11-27
- * @changelog v4.6.2 - CRITICAL HOTFIX: Fixed internal stats (min/med/max/count)
+ * @changelog v4.6.3-debug - Added comprehensive logging to diagnose internal stats issue
+ *   - Added logging to _buildInternalIndex_() to show columns, sample data, and keys created
+ *   - Added logging to Full List generation to show lookup attempts and success rate
+ *   - Shows summary: X out of Y combinations have employee data
+ *   - Purpose: Identify why internal stats not populating despite CR working
+ * @previous v4.6.2 - CRITICAL HOTFIX: Fixed internal stats (min/med/max/count)
  *   - Bug: Region key mismatch - internalIndex uses "USA", lookup uses "US"
  *   - Bug: Property name mismatch - returns `n`, code accesses `cnt`
  *   - Fix: Normalize region to "USA" before lookup
@@ -1314,35 +1319,72 @@ function _buildInternalIndex_() {
   const ss = SpreadsheetApp.getActive();
   const sh = ss.getSheetByName('Base Data');
   const out = new Map();
-  if (!sh) return out;
+  if (!sh) {
+    Logger.log('ERROR: Base Data sheet not found!');
+    return out;
+  }
 
   const values = _getSheetDataCached_(sh); // OPTIMIZED: Use cached data
   const head = values[0].map(h => String(h || ''));
+  
+  Logger.log(`Base Data headers (first 15): ${head.slice(0, 15).join(', ')}`);
+  
   const colFam  = head.indexOf('Job Family Name');
   const colMapN = head.indexOf('Mapped Family');
   const colAct  = head.indexOf('Active/Inactive');
   const colSite = head.indexOf('Site');
   const colLvl  = head.indexOf('Job Level');
   const colPay  = head.indexOf('Base salary');
-  if ([colFam,colAct,colSite,colLvl,colPay].some(i => i < 0)) return out;
+  
+  Logger.log(`Base Data column indices: Job Family Name=${colFam}, Mapped Family=${colMapN}, Active/Inactive=${colAct}, Site=${colSite}, Job Level=${colLvl}, Base salary=${colPay}`);
+  
+  if ([colFam,colAct,colSite,colLvl,colPay].some(i => i < 0)) {
+    Logger.log('ERROR: One or more required columns not found in Base Data!');
+    return out;
+  }
 
   const buckets = new Map();
+  let processedCount = 0;
+  let skippedInactive = 0;
+  let skippedMissingData = 0;
+  
   for (let r=1; r<values.length; r++) {
     const row = values[r];
-    if (String(row[colAct] || '').toLowerCase() !== 'active') continue;
+    const actStatus = String(row[colAct] || '').toLowerCase();
+    if (actStatus !== 'active') {
+      skippedInactive++;
+      continue;
+    }
     const site = String(row[colSite] || '').trim();
     const normSite = site === 'India' ? 'India' : (site === 'USA' ? 'USA' : (site === 'UK' ? 'UK' : site));
     const famCode = String(row[colFam] || '').trim();
     const execName = String(colMapN >= 0 ? (row[colMapN] || '') : (row[colFam] || '')).trim();
     const ciq = String(row[colLvl] || '').trim();
     const pay = toNumber_(row[colPay]);
-    if ((!famCode && !execName) || !ciq || isNaN(pay)) continue;
+    
+    if ((!famCode && !execName) || !ciq || isNaN(pay)) {
+      skippedMissingData++;
+      continue;
+    }
+    
+    processedCount++;
+    
+    // Log first 3 employees for debugging
+    if (processedCount <= 3) {
+      Logger.log(`Sample employee ${processedCount}: site=${normSite}, famCode=${famCode}, execName=${execName}, level=${ciq}, pay=${pay}`);
+    }
+    
     // Primary index by Exec Description (normalized)
     if (execName) {
       const execKey = `${normSite}|${String(execName).toUpperCase()}|${ciq}`;
       if (!buckets.has(execKey)) buckets.set(execKey, []);
       buckets.get(execKey).push(pay);
+      
+      if (processedCount <= 3) {
+        Logger.log(`  → Created exec key: ${execKey}`);
+      }
     }
+    
     const dot = famCode.lastIndexOf('.');
     const base = dot >= 0 ? famCode.slice(0, dot) : famCode; // EN.SODE from EN.SODE.P5
     const keys = new Set([base, remapAonCode_(base), reverseRemapAonCode_(base)]);
@@ -1351,8 +1393,14 @@ function _buildInternalIndex_() {
       const key = `${normSite}|${b}|${ciq}`;
       if (!buckets.has(key)) buckets.set(key, []);
       buckets.get(key).push(pay);
+      
+      if (processedCount <= 3) {
+        Logger.log(`  → Created aon key: ${key}`);
+      }
     });
   }
+  
+  Logger.log(`Processed ${processedCount} active employees, skipped ${skippedInactive} inactive, skipped ${skippedMissingData} with missing data`);
   buckets.forEach((arr, key) => {
     arr.sort((a,b)=>a-b);
     const n = arr.length; const min = arr[0], max = arr[n-1];
@@ -4919,12 +4967,16 @@ function rebuildFullListAllCombinations_() {
   
   // Generate all combinations
   const rows = [];
+  let totalCombinations = 0;
+  let combinationsWithInternalData = 0;
+  
   for (const region of regions) {
     for (const aonCode of familiesX0Y1) {
       const execDesc = execMap.get(aonCode) || aonCode;
       const category = _effectiveCategoryForFamily_(aonCode);
       
       for (const ciqLevel of levels) {
+        totalCombinations++;
         // OPTIMIZED: Get market percentiles from pre-loaded cache (instant lookup!)
         const aonKey = `${region}|${aonCode}|${ciqLevel}`;
         const percentiles = aonCache.get(aonKey) || {};
@@ -4941,6 +4993,16 @@ function rebuildFullListAllCombinations_() {
         const intRegion = region === 'US' ? 'USA' : region;
         const intKey = `${intRegion}|${aonCode}|${ciqLevel}`;
         const intStats = internalIndex.get(intKey) || { min: '', med: '', max: '', n: 0 };
+        
+        // Log first 5 lookups for debugging
+        if (totalCombinations <= 5) {
+          const found = internalIndex.has(intKey);
+          Logger.log(`Lookup ${totalCombinations}: key="${intKey}" found=${found} stats=${JSON.stringify(intStats)}`);
+        }
+        
+        if (intStats.n > 0) {
+          combinationsWithInternalData++;
+        }
         
         // Key format: JobFamily+Level+Region (for calculator XLOOKUP)
         const key = `${execDesc}${ciqLevel}${region}`;
@@ -5045,7 +5107,9 @@ function rebuildFullListAllCombinations_() {
   // Clear cache
   CacheService.getDocumentCache().removeAll(['MAP:FULL_LIST']);
   
-  const msg = `✅ Generated ${rows.length} combinations for ${familiesX0Y1.length} families\n⚡ Optimized: 90% faster (v4.6.0)`;
+  Logger.log(`Internal stats summary: ${combinationsWithInternalData} out of ${totalCombinations} combinations have employee data`);
+  
+  const msg = `✅ Generated ${rows.length} combinations for ${familiesX0Y1.length} families\n⚡ Optimized: 90% faster (v4.6.0)\n📊 Internal stats: ${combinationsWithInternalData}/${totalCombinations}`;
   SpreadsheetApp.getActive().toast(msg, 'Full List Complete', 5);
 }
 
