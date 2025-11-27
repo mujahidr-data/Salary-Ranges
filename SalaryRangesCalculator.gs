@@ -3508,12 +3508,16 @@ function syncEmployeesMappedSheet_() {
   const iSite = baseHead.findIndex(h => /^Site$/i.test(h));
   const iSalary = baseHead.findIndex(h => /Base.*salary/i.test(h));
   const iStart = baseHead.findIndex(h => /Start.*date/i.test(h));
-  const iActive = baseHead.findIndex(h => /Active/i.test(h));
+  const iActive = baseHead.findIndex(h => /Active.*Inactive|Status/i.test(h));
+  const iTerm = baseHead.findIndex(h => /Termination.*date|Term.*date|End.*date|Leave.*date/i.test(h));
   
   if (iEmpID < 0) {
     SpreadsheetApp.getActive().toast('Employee ID column not found in Base Data', 'Error', 5);
     return;
   }
+  
+  // Cutoff date: Jan 1, 2024 for filtering exits
+  const exitCutoffDate = new Date('2024-01-01');
   
   // Build title-to-mapping suggestions inline (no separate Title Mapping sheet needed)
   const titleToMappings = new Map(); // title → [{aonCode, level, count}, ...]
@@ -3576,13 +3580,30 @@ function syncEmployeesMappedSheet_() {
   // Build new rows
   const rows = [];
   let legacyCount = 0, titleBasedCount = 0, needsReviewCount = 0, approvedCount = 0;
+  let filteredCount = 0; // Track employees filtered out (old exits)
   
   for (let r = 1; r < baseVals.length; r++) {
     const row = baseVals[r];
     const empID = String(row[iEmpID] || '').trim();
     if (!empID) continue;
     
-    // Include ALL employees (active and inactive)
+    // Filter: Include only Active employees + Inactive employees who left after Jan 1, 2024
+    const activeStatus = iActive >= 0 ? String(row[iActive] || '').trim() : '';
+    const termDate = iTerm >= 0 ? row[iTerm] : null;
+    
+    // Skip if inactive AND (no term date OR term date before cutoff)
+    if (activeStatus.toLowerCase() === 'inactive') {
+      if (!termDate) {
+        filteredCount++;
+        continue; // No term date, skip
+      }
+      const termDateObj = termDate instanceof Date ? termDate : new Date(termDate);
+      if (!termDateObj || isNaN(termDateObj.getTime()) || termDateObj < exitCutoffDate) {
+        filteredCount++;
+        continue; // Terminated before Jan 1, 2024, skip
+      }
+    }
+    
     const name = iName >= 0 ? String(row[iName] || '') : '';
     const title = iTitle >= 0 ? String(row[iTitle] || '') : '';
     const dept = iDept >= 0 ? String(row[iDept] || '') : '';
@@ -3736,12 +3757,14 @@ function syncEmployeesMappedSheet_() {
   empSh.setConditionalFormatRules(rules);
   empSh.autoResizeColumns(1,15);
   
-  const msg = `Synced ${rows.length} employees:\n` +
+  const totalProcessed = rows.length + filteredCount;
+  const msg = `Synced ${rows.length} employees (${filteredCount} old exits filtered):\n` +
     `✓ Approved: ${approvedCount}\n` +
     `📋 Legacy: ${legacyCount}\n` +
     `🔍 Title-Based: ${titleBasedCount}\n` +
-    `⚠️ Needs Review: ${needsReviewCount}`;
-  SpreadsheetApp.getActive().toast(msg, 'Employees Mapped', 8);
+    `⚠️ Needs Review: ${needsReviewCount}\n\n` +
+    `Filter: Active + exits after Jan 1, 2024`;
+  SpreadsheetApp.getActive().toast(msg, 'Employees Mapped', 10);
 }
 
 /**
