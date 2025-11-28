@@ -14,7 +14,7 @@
  * - Persistent legacy mapping storage
  * - Interactive calculator UI
  * 
- * @version 4.24.0
+ * @version 4.25.0
  * @date 2025-11-28
  * @performance Highly optimized with strategic caching and batch operations:
  *   - Pre-loaded Aon data: Saves 10,080+ sheet reads (~95% faster market data build)
@@ -25,7 +25,17 @@
  *   - Legacy mappings batch load: Saves 600+ lookups (~90% faster mapping resolution)
  *   - Pre-indexed CR groups: ~98% faster CR calculations (Map-based grouping)
  *   - Reduced sleep timers: 500ms→300ms, 1000ms→500ms (~40% faster workflows)
- * @changelog v4.24.0 - BUGFIX: New Hire CR not populating (status filter too strict)
+ * @changelog v4.25.0 - BUGFIX: Level Anomaly blank + Enhanced debugging
+ *   - FIXED: Level Anomaly checked wrong column (aonCode vs fullAonCode)
+ *   - BUG: Line 4715 checked `aonCode` (Column F = base code "EN.SODE") with no token
+ *   - FIX: Now checks `fullAonCode` (Column I = "EN.SODE.P5") to extract token
+ *   - RESULT: Level Anomaly will now populate when Bob level ≠ Full Aon Code token
+ *   - ADDED: Debug logging for Recent Promotion detection (shows cutoff date + count)
+ *   - ADDED: Debug logging for first 3 employees (verify anomaly detection working)
+ *   - ADDED: Summary counts in import complete message (Level + Title anomalies)
+ *   - IMPROVED: Better logging for Comp History column detection
+ *   - ACTION: User should re-import to see Level Anomaly populate correctly
+ * @previous v4.24.0 - BUGFIX: New Hire CR not populating (status filter too strict)
  *   - FIXED: _preIndexEmployeesForCR_() only included "Approved" status
  *   - PROBLEM: Most employees have "Legacy" status, were being excluded
  *   - SOLUTION: Now includes both "Approved" AND "Legacy" status
@@ -4507,8 +4517,12 @@ function syncEmployeesMappedSheet_() {
           }
         }
       }
-      Logger.log(`Found ${promotionMap.size} employees with promotions in last 90 days`);
+      Logger.log(`✅ Recent Promotion: Found ${promotionMap.size} employees with promotions in last 90 days (cutoff: ${promotionCutoffDate.toISOString().split('T')[0]})`);
+    } else {
+      Logger.log(`⚠️ Recent Promotion: Could not find required columns in Comp History (EmpID=${iCompEmpID}, Reason=${iHistReason}, EffDate=${iEffDate})`);
     }
+  } else {
+    Logger.log(`⚠️ Recent Promotion: Comp History sheet not found or empty`);
   }
   
   // Get Base Data
@@ -4706,17 +4720,17 @@ function syncEmployeesMappedSheet_() {
     let levelAnomaly = '';
     let titleAnomaly = '';
     
-    // Level Anomaly: Check if Bob's Job Level matches the level in Aon Code
-    // Example: If Bob says employee is L6 IC, but Aon Code is EN.SODE.P2 (L2 IC level), flag it!
-    if (aonCode && ciqLevel) {
+    // Level Anomaly: Check if Bob's Job Level matches the level token in Full Aon Code
+    // Example: If Bob says L6 IC (expects P6), but Full Aon Code is EN.SODE.P2, flag it!
+    if (fullAonCode && ciqLevel) {
       // Expected Aon level token from Bob's Job Level (e.g., "L6 IC" → "P6")
       const expectedToken = _ciqLevelToToken_(ciqLevel);
-      // Actual token from Aon Code (e.g., "EN.SODE.P2" → "P2")
-      const parts = aonCode.split('.');
+      // Actual token from Full Aon Code (e.g., "EN.SODE.P2" → "P2")
+      const parts = fullAonCode.split('.');
       const actualToken = parts.length >= 3 ? parts[2] : '';
       
       if (expectedToken && actualToken && expectedToken !== actualToken) {
-        // Show both Bob's level and Aon Code level for clarity
+        // Show both Bob's level and actual token for clarity
         levelAnomaly = `Bob: ${ciqLevel} (${expectedToken}) ≠ Aon: ${actualToken}`;
       }
     }
@@ -4805,6 +4819,11 @@ function syncEmployeesMappedSheet_() {
       const monthsAgo = Math.floor(daysAgo / 30);
       const timeAgo = monthsAgo > 0 ? `${monthsAgo} month${monthsAgo > 1 ? 's' : ''} ago` : `${daysAgo} day${daysAgo > 1 ? 's' : ''} ago`;
       recentPromotion = `Promoted ${timeAgo} - verify mapping`;
+    }
+    
+    // Debug: Log first 3 employees to verify anomaly detection
+    if (rows.length < 3) {
+      Logger.log(`Employee ${rows.length + 1}: EmpID=${empID}, Level=${ciqLevel}, FullAonCode=${fullAonCode}, LevelAnomaly="${levelAnomaly}", RecentPromo="${recentPromotion}", TitleAnomaly="${titleAnomaly}"`);
     }
     
     rows.push([empID, name, title, dept, site, aonCode, jobFamilyDesc, ciqLevel, fullAonCode, mappingOverride, confidence, source, status, salary, startDate, recentPromotion, levelAnomaly, titleAnomaly, marketDataMissing]);
@@ -4911,10 +4930,14 @@ function syncEmployeesMappedSheet_() {
   
   autoResizeColumnsIfNotCalculator(empSh, 1, 19);
   
-  // Count issues
+  // Count issues across all columns
   const mappingOverrideCount = rows.filter(row => row[9] && row[9].length > 0).length; // Column J (index 9)
   const recentPromotionCount = rows.filter(row => row[15] && row[15].length > 0).length; // Column P (index 15)
+  const levelAnomalyCount = rows.filter(row => row[16] && row[16].length > 0).length; // Column Q (index 16)
+  const titleAnomalyCount = rows.filter(row => row[17] && row[17].length > 0).length; // Column R (index 17)
   const marketDataMissingCount = rows.filter(row => row[18] && row[18].length > 0).length; // Column S (index 18)
+  
+  Logger.log(`📊 Summary Counts: MappingOverride=${mappingOverrideCount}, RecentPromotion=${recentPromotionCount}, LevelAnomaly=${levelAnomalyCount}, TitleAnomaly=${titleAnomalyCount}, MarketDataMissing=${marketDataMissingCount}`);
   
   const totalProcessed = rows.length + filteredCount;
   let msg = `✅ Synced ${rows.length} employees (${filteredCount} old exits filtered):\n\n` +
@@ -4929,6 +4952,14 @@ function syncEmployeesMappedSheet_() {
   
   if (recentPromotionCount > 0) {
     msg += `\n📈 Recent Promotions: ${recentPromotionCount} employees (verify mappings)\n`;
+  }
+  
+  if (levelAnomalyCount > 0) {
+    msg += `\n🟠 Level Anomalies: ${levelAnomalyCount} employees (Bob level ≠ Aon token)\n`;
+  }
+  
+  if (titleAnomalyCount > 0) {
+    msg += `\n🟣 Title Anomalies: ${titleAnomalyCount} employees (mapping differs from peers)\n`;
   }
   
   if (marketDataMissingCount > 0) {
