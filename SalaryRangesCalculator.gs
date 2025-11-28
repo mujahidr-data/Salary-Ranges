@@ -14,7 +14,7 @@
  * - Persistent legacy mapping storage
  * - Interactive calculator UI
  * 
- * @version 4.28.0
+ * @version 4.28.1
  * @date 2025-11-28
  * @performance Highly optimized with strategic caching and batch operations:
  *   - Pre-loaded Aon data: Saves 10,080+ sheet reads (~95% faster market data build)
@@ -25,7 +25,31 @@
  *   - Legacy mappings batch load: Saves 600+ lookups (~90% faster mapping resolution)
  *   - Pre-indexed CR groups: ~98% faster CR calculations (Map-based grouping)
  *   - Reduced sleep timers: 500ms→300ms, 1000ms→500ms (~40% faster workflows)
- * @changelog v4.28.0 - CRITICAL FIX: Avg CR not populating despite having employees
+ * @changelog v4.28.1 - HOTFIX: Site normalization missing in CR calculation
+ *   - USER REPORT: "i dont think it worked" (after v4.28.0 fix)
+ *   - PROBLEM: v4.28.0 fixed aonCode mismatch but CR still blank
+ *   - ROOT CAUSE: Site/region normalization mismatch (US vs USA):
+ *     • Internal stats: normalizes "US" → "USA" (line 1715) ✓
+ *     • CR index: used raw "US" (line 5782) ❌
+ *     • CR lookup: used raw "US" (line 6037) ❌
+ *   - RESULT: Keys never matched even after v4.28.0 aonCode fix:
+ *     • Internal stats: "USA|EN.SODE|L5 IC" (normalized)
+ *     • CR index: "US|EN.SODE|L5 IC" (not normalized)
+ *     • CR lookup: "US|EN.SODE|L5 IC" (not normalized)
+ *   - THE FIX (Lines 5779-5782):
+ *     Added site normalization in _preIndexEmployeesForCR_():
+ *     const normSite = empSite === 'US' ? 'USA' : ...
+ *     const key = `${normSite}|${aonCode}|${empLevel}`;
+ *   - THE FIX (Lines 6037-6038):
+ *     Added region normalization in Full List CR lookup:
+ *     const crRegion = region === 'US' ? 'USA' : region;
+ *     const empKey = `${crRegion}|${aonCode}|${ciqLevel}`;
+ *   - ENHANCED DEBUGGING:
+ *     • CR index logs now show normalized region
+ *     • CR lookup logs show both raw and normalized region
+ *   - IMPACT: NOW all three use consistent key: "USA|EN.SODE|L5 IC"
+ *   - ACTION: User must run "Build Market Data" again (now it will work!)
+ * @previous v4.28.0 - CRITICAL FIX: Avg CR not populating despite having employees
  *   - USER REPORT: "why is avg cr not being created for these even though there are employees"
  *   - PROBLEM: Full List showed Emp Count (1, 2, 15...) but Avg CR was blank
  *   - ROOT CAUSE: Key format mismatch between internal stats and CR calculations:
@@ -5776,10 +5800,13 @@ function _preIndexEmployeesForCR_() {
     // Skip if no Aon Code
     if (!aonCode) return;
     
+    // Normalize region (US → USA for consistency with internal stats)
+    const normSite = empSite === 'US' ? 'USA' : (empSite === 'USA' ? 'USA' : (empSite === 'India' ? 'India' : (empSite === 'UK' ? 'UK' : empSite)));
+    
     // CRITICAL: Use aonCode directly (not description) to match internal stats key format
-    // Internal stats uses: ${site}|${aonCode}|${level}
+    // Internal stats uses: ${normSite}|${aonCode}|${level}
     // CR must use same format for Full List lookup to work!
-    const key = `${empSite}|${aonCode}|${empLevel}`;
+    const key = `${normSite}|${aonCode}|${empLevel}`;
     
     if (!empIndex.has(key)) {
       empIndex.set(key, {
@@ -5827,11 +5854,12 @@ function _preIndexEmployeesForCR_() {
   Logger.log(`Skipped ${skippedInactive} inactive employees (same filter as internal stats)`);
   Logger.log(`New Hire CR: Found ${totalNewHires} total employees hired in last 365 days (cutoff: ${cutoffDate.toISOString().split('T')[0]})`);
   
-  // Log first 5 keys for debugging
+  // Log first 5 keys for debugging (showing normalization)
   let keyCount = 0;
   empIndex.forEach((group, key) => {
     if (keyCount < 5) {
-      Logger.log(`CR Index sample ${keyCount + 1}: "${key}" has ${group.salaries.length} employees`);
+      const parts = key.split('|');
+      Logger.log(`CR Index sample ${keyCount + 1}: "${key}" (region=${parts[0]}) has ${group.salaries.length} employees`);
       keyCount++;
     }
   });
@@ -6029,9 +6057,10 @@ function rebuildFullListAllCombinations_() {
         }
         
         // OPTIMIZED: Calculate CR values from pre-indexed employee groups (instant lookup!)
-        // CRITICAL: Use aonCode (not execDesc) to match _preIndexEmployeesForCR_() key format
-        // Both internal stats and CR use: ${region}|${aonCode}|${level}
-        const empKey = `${region}|${aonCode}|${ciqLevel}`;
+        // CRITICAL: Use aonCode (not execDesc) AND normalize region to match _preIndexEmployeesForCR_() key format
+        // Both internal stats and CR use: ${normRegion}|${aonCode}|${level} (where US → USA)
+        const crRegion = region === 'US' ? 'USA' : region;
+        const empKey = `${crRegion}|${aonCode}|${ciqLevel}`;
         const empGroup = empIndex.get(empKey);
         let crStats = { avgCR: '', ttCR: '', newHireCR: '', btCR: '' };
         
@@ -6039,7 +6068,7 @@ function rebuildFullListAllCombinations_() {
         if (totalCombinations <= 5) {
           const found = empIndex.has(empKey);
           const empCount = empGroup ? empGroup.salaries.length : 0;
-          Logger.log(`CR Lookup ${totalCombinations}: key="${empKey}" found=${found} employees=${empCount} intStats=${intStats.n}`);
+          Logger.log(`CR Lookup ${totalCombinations}: key="${empKey}" (raw region="${region}", normalized="${crRegion}") found=${found} employees=${empCount} intStats=${intStats.n}`);
         }
         
         if (empGroup && rangeMid && rangeMid > 0) {
