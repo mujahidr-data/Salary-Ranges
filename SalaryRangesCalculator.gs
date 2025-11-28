@@ -6256,7 +6256,7 @@ function reviewRangeProgression() {
   const colIdx = {};
   headers.forEach((h, i) => { colIdx[h] = i; });
   
-  const requiredCols = ['Region', 'Aon Code', 'CIQ Level', 'Range Start', 'Range Mid', 'Range End'];
+  const requiredCols = ['Region', 'Aon Code (base)', 'CIQ Level', 'Range Start', 'Range Mid', 'Range End'];
   const missing = requiredCols.filter(c => colIdx[c] === undefined);
   if (missing.length > 0) {
     ui.alert('❌ Error', `Missing columns in Full List: ${missing.join(', ')}`, ui.ButtonSet.OK);
@@ -6275,7 +6275,7 @@ function reviewRangeProgression() {
   for (let i = 1; i < data.length; i++) {
     const row = data[i];
     const region = row[colIdx['Region']];
-    const aonCode = row[colIdx['Aon Code']];
+    const aonCode = row[colIdx['Aon Code (base)']];
     const level = row[colIdx['CIQ Level']];
     const rangeStart = row[colIdx['Range Start']];
     const rangeMid = row[colIdx['Range Mid']];
@@ -6565,7 +6565,7 @@ function applyRangeCorrections() {
     for (let i = 1; i < fullListData.length; i++) {
       const row = fullListData[i];
       const region = row[fullListColIdx['Region']];
-      const aonCode = row[fullListColIdx['Aon Code']];
+      const aonCode = row[fullListColIdx['Aon Code (base)']];
       const level = row[fullListColIdx['CIQ Level']];
       
       if (region === correction.region && aonCode === correction.jobFamily && level === correction.level) {
@@ -6595,7 +6595,7 @@ function applyRangeCorrections() {
         for (let i = 1; i < fullListData.length; i++) {
           const row = fullListData[i];
           const region = row[fullListColIdx['Region']];
-          const aonCode = row[fullListColIdx['Aon Code']];
+          const aonCode = row[fullListColIdx['Aon Code (base)']];
           const level = row[fullListColIdx['CIQ Level']];
           const fxRate = parseFloat(row[fxCol]) || 1;
           
