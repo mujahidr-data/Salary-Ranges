@@ -4327,17 +4327,7 @@ function syncEmployeesMappedSheet_() {
     let titleAnomaly = '';
     
     // Level Anomaly: Check if CIQ level matches expected Aon level
-    if (aonCode && ciqLevel) {
-      // Expected Aon level token from CIQ level (e.g., "L5 IC" → "P5")
-      const expectedToken = _ciqLevelToToken_(ciqLevel);
-      // Actual token from Aon Code (e.g., "EN.SODE.P5" → "P5")
-      const parts = aonCode.split('.');
-      const actualToken = parts.length >= 3 ? parts[2] : '';
-      
-      if (expectedToken && actualToken && expectedToken !== actualToken) {
-        levelAnomaly = `Expected ${expectedToken}, got ${actualToken}`;
-      }
-    }
+    // MOVED: This will be calculated AFTER fullAonCode is built
     
     // Title Anomaly: Check if this employee's mapping differs from others with same title
     if (title && aonCode && ciqLevel && titleMap.has(title)) {
@@ -4368,12 +4358,28 @@ function syncEmployeesMappedSheet_() {
     // Column J: Mapping Override (check if Full Aon Code doesn't match expected - for now, blank)
     let mappingOverride = '';
     
+    // NOW calculate Level Anomaly using fullAonCode
+    if (fullAonCode && ciqLevel) {
+      // Expected Aon level token from CIQ level (e.g., "L5 IC" → "P5")
+      const expectedToken = _ciqLevelToToken_(ciqLevel);
+      // Actual token from Full Aon Code (e.g., "EN.SODE.P5" → "P5")
+      const parts = fullAonCode.split('.');
+      const actualToken = parts.length >= 3 ? parts[2] : '';
+      
+      if (expectedToken && actualToken && expectedToken !== actualToken) {
+        levelAnomaly = `Expected ${expectedToken}, got ${actualToken}`;
+      }
+    }
+    
     // Column P: Recent Promotion (check Comp History for promotions in last 90 days - for now, blank)
     let recentPromotion = '';
     
     // Column S: Market Data Missing (check if Aon data exists for this Full Aon Code)
     let marketDataMissing = '';
-    if (fullAonCode && site) {
+    if (aonCode && ciqLevel && site) {
+      // Normalize region to match Aon cache format
+      const normSite = site === 'USA' ? 'US' : site; // Aon cache uses 'US', 'India', 'UK'
+      
       // Check if this is a .5 level
       const isHalfLevel = ciqLevel.includes('.5');
       
@@ -4387,8 +4393,8 @@ function syncEmployeesMappedSheet_() {
           const precedingLevel = `L${baseNum} ${levelType}`;
           const succeedingLevel = `L${baseNum + 1} ${levelType}`;
           
-          const precedingKey = `${site}|${aonCode}|${precedingLevel}`;
-          const succeedingKey = `${site}|${aonCode}|${succeedingLevel}`;
+          const precedingKey = `${normSite}|${aonCode}|${precedingLevel}`;
+          const succeedingKey = `${normSite}|${aonCode}|${succeedingLevel}`;
           
           const hasPreceding = aonCache.has(precedingKey);
           const hasSucceeding = aonCache.has(succeedingKey);
@@ -4404,9 +4410,9 @@ function syncEmployeesMappedSheet_() {
         }
       } else {
         // For regular levels, check if direct market data exists
-        const aonKey = `${site}|${aonCode}|${ciqLevel}`;
+        const aonKey = `${normSite}|${aonCode}|${ciqLevel}`;
         if (!aonCache.has(aonKey)) {
-          marketDataMissing = `No ${site} data`;
+          marketDataMissing = `No ${normSite} data`;
         }
       }
     }
