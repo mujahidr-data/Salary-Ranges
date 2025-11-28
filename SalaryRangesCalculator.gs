@@ -4716,6 +4716,18 @@ function syncEmployeesMappedSheet_() {
       jobFamilyDesc = execDescMap.get(aonCode) || '';
     }
     
+    // Build Full Aon Code FIRST (needed for anomaly detection)
+    // Priority: Preserve user edits, otherwise auto-generate
+    let fullAonCode = '';
+    if (prev && prev.fullAonCode) {
+      // User has edited this before - preserve their edit
+      fullAonCode = prev.fullAonCode;
+    } else if (aonCode && ciqLevel) {
+      // Auto-generate from base Aon Code + Level token
+      const levelToken = _ciqLevelToToken_(ciqLevel); // e.g., "L3 IC" → "P3"
+      fullAonCode = levelToken ? `${aonCode}.${levelToken}` : aonCode;
+    }
+    
     // Anomaly Detection
     let levelAnomaly = '';
     let titleAnomaly = '';
@@ -4781,19 +4793,8 @@ function syncEmployeesMappedSheet_() {
       }
     }
     
-    // Build Full Aon Code (e.g., "EN.SODE.P3")
-    // Priority: Preserve user edits, otherwise auto-generate
-    let fullAonCode = '';
-    if (prev && prev.fullAonCode) {
-      // User has edited this before - preserve their edit
-      fullAonCode = prev.fullAonCode;
-    } else if (aonCode && ciqLevel) {
-      // Auto-generate from base Aon Code + Level token
-      const levelToken = _ciqLevelToToken_(ciqLevel); // e.g., "L3 IC" → "P3"
-      fullAonCode = levelToken ? `${aonCode}.${levelToken}` : aonCode;
-    }
-    
     // Check for Mapping Override (Full Aon Code doesn't match ideal F+H combination)
+    // Note: fullAonCode already built above (before anomaly detection)
     let mappingOverride = '';
     if (aonCode && ciqLevel && fullAonCode) {
       const levelToken = _ciqLevelToToken_(ciqLevel);
