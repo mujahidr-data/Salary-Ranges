@@ -1136,7 +1136,8 @@ function applyCurrency_() {
 
   const maybeFormatCol = (c, fmt) => { if (c > 0) _setFmtIfNeeded_(sh.getRange(headerRow+1, c, lastRow - headerRow, 1), fmt); };
   [cP625, cP75, cP90, cMin, cMed, cMax].forEach(c => maybeFormatCol(c, cfmt));
-  if (cEmp > 0) maybeFormatCol(cEmp, '0;0;;@');
+  // Hide zeros in Emp Count column (0;-0;;@)
+  if (cEmp > 0) maybeFormatCol(cEmp, '0;-0;;@');
 }
 
 /********************************
@@ -3989,10 +3990,8 @@ function buildCalculatorUIForY1_() {
   sh.getRange(8,12, levels.length, 1).setFormulas(formulasNewHireCR);
   sh.getRange(8,13, levels.length, 1).setFormulas(formulasBTCR);
   
-  // Format
-  sh.getRange(8,2,levels.length,3).setNumberFormat('$#,##0');
-  sh.getRange(8,6,levels.length,3).setNumberFormat('$#,##0');
-  sh.getRange(8,9,levels.length,1).setNumberFormat('0');
+  // Apply currency formatting (includes hide-zero format for Emp Count)
+  applyCurrency_();
 }
 
 /**
