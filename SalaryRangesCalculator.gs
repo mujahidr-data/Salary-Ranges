@@ -6403,7 +6403,7 @@ function applyRangeCorrections() {
     return;
   }
   
-  SpreadsheetApp.getActive().toast(`Applying ${approvedCorrections.length} correction(s) to Full List...', '✅ Apply Range Corrections', 3);
+  SpreadsheetApp.getActive().toast(`Applying ${approvedCorrections.length} correction(s) to Full List...`, '✅ Apply Range Corrections', 3);
   
   // Read Full List
   const fullListSheet = ss.getSheetByName('Full List');
