@@ -14,19 +14,24 @@
  * - Persistent legacy mapping storage
  * - Interactive calculator UI
  * 
- * @version 4.13.0
+ * @version 4.14.0
  * @date 2025-11-27
- * @changelog v4.13.0 - FEATURE: Recent Promotion detection and flagging
+ * @changelog v4.14.0 - FEATURE: Mapping Override detection + Auto-justify all sheets
+ *   - NEW COLUMN: "Mapping Override" (column J) flags when Full Aon Code ≠ ideal F+H combination
+ *   - Detects intentional overrides: e.g., using R3 (rollup) instead of P3 (direct)
+ *   - Shows: "Using R3 instead of P3" or "Using M5 instead of P5"
+ *   - Purpose: Track when users intentionally use rollup/custom codes
+ *   - Highlighting: Blue background on Mapping Override column (#E3F2FD)
+ *   - Summary stats: "🔵 Mapping Overrides: X employees (using rollup/custom codes)"
+ *   - Schema: 18 → 19 columns (Mapping Override inserted after Full Aon Code)
+ *   - All column indices updated (Confidence: J→K, Source: K→L, Status: L→M, etc.)
+ *   - AUTO-JUSTIFY: All automated sheets now auto-resize columns EXCEPT calculators
+ *   - Calculators preserve manual formatting (user controls column widths)
+ *   - Helper function: autoResizeColumnsIfNotCalculator() skips sheets with "calculator" in name
+ *   - Applies to: Base Data, Bonus History, Comp History, Performance Ratings, Employees Mapped, Full List, Full List USD
+ * @previous v4.13.0 - FEATURE: Recent Promotion detection and flagging
  *   - NEW COLUMN: "Recent Promotion" (column O) flags employees promoted in last 90 days
  *   - Data source: Comp History table, "History reason" column
- *   - Detects: "promotion", "promoted", "promo" keywords (case-insensitive)
- *   - Shows: "Promoted 2 months ago - verify mapping" or "Promoted 15 days ago - verify mapping"
- *   - Highlighting: Orange background on Recent Promotion column
- *   - Summary stats: Shows count of recently promoted employees
- *   - Purpose: Review if mapping is still correct after promotion
- *   - Example: Employee promoted from L4 to L5, verify they're mapped to L5 IC
- *   - Schema: 17 → 18 columns (Recent Promotion inserted before Level Anomaly)
- *   - All column indices updated (Level Anomaly: O→P, Title Anomaly: P→Q, Market Data Missing: Q→R)
  * @previous v4.12.0 - UX: Full Aon Code persistence + Better notifications
  *   - PERSISTENCE: Full Aon Code (Column I) now preserved across imports
  *   - VISUAL: Yellow headers on editable columns (F: Aon Code, I: Full Aon Code)
@@ -191,6 +196,22 @@ const WRITE_COLS_LIMIT = 23; // Column W limit for Base Data sheet
  */
 function normalizeString(s) {
   return String(s || "").toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Auto-resize columns in a sheet, but skip calculator sheets (user manually formats those)
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet - Sheet to auto-resize
+ * @param {number} startColumn - Starting column (1-based)
+ * @param {number} numColumns - Number of columns to resize
+ */
+function autoResizeColumnsIfNotCalculator(sheet, startColumn, numColumns) {
+  const sheetName = sheet.getName();
+  // Skip calculator sheets - user manually formats these
+  if (sheetName.toLowerCase().includes('calculator')) {
+    Logger.log(`Skipping auto-resize for calculator sheet: ${sheetName}`);
+    return;
+  }
+  sheet.autoResizeColumns(startColumn, numColumns);
 }
 
 /**
@@ -462,7 +483,7 @@ function importBobDataSimpleWithLookup() {
       sheet.getRange(2, idxBasePay + 1, numRows, 1).setNumberFormat("#,##0.00");
     }
     
-    sheet.autoResizeColumns(1, numCols);
+    autoResizeColumnsIfNotCalculator(sheet, 1, numCols);
     Logger.log(`Successfully imported ${sheetName} (preserved custom columns beyond column ${numCols})`);
     
   } catch (error) {
@@ -552,7 +573,7 @@ function importBobBonusHistoryLatest() {
       sheet.getRange(2, 6, numRows, 1).setNumberFormat("#,##0.00"); // Amount
     }
     
-    sheet.autoResizeColumns(1, numCols);
+    autoResizeColumnsIfNotCalculator(sheet, 1, numCols);
     Logger.log(`Successfully imported ${targetSheetName} (preserved custom columns beyond column ${numCols})`);
     
   } catch (error) {
@@ -636,7 +657,7 @@ function importBobCompHistoryLatest() {
       sheet.getRange(2, 4, numRows, 1).setNumberFormat("#,##0.00"); // Salary
     }
     
-    sheet.autoResizeColumns(1, numCols);
+    autoResizeColumnsIfNotCalculator(sheet, 1, numCols);
     Logger.log(`Successfully imported ${targetSheetName} (preserved custom columns beyond column ${numCols})`);
     
   } catch (error) {
@@ -1709,7 +1730,7 @@ function rebuildFullListTabs_() {
   const fullHeader = ['Site','Region','Aon Code','Job Family (Exec Description)','Job Family (Raw)','CIQ Level','Aon Level','P10','P25','P40','P50','P62.5','P75','P90','Internal Min','Internal Median','Internal Max','Employees','', 'Key'];
   fl.clearContents(); fl.getRange(1,1,1,fullHeader.length).setValues([fullHeader]);
   if (rows.length) fl.getRange(2,1,rows.length,fullHeader.length).setValues(rows);
-  fl.autoResizeColumns(1, fullHeader.length);
+  autoResizeColumnsIfNotCalculator(fl, 1, fullHeader.length);
 
   const baseSh = ss.getSheetByName('Base Data');
   SpreadsheetApp.getActive().toast('Full List rebuilt successfully', 'Done', 5);
@@ -1801,7 +1822,7 @@ function buildFullListUsd_() {
   dst.setTabColor('#FF0000'); // Red color for automated sheets
   dst.clearContents();
   dst.getRange(1,1,out.length,head.length).setValues(out);
-  dst.autoResizeColumns(1, head.length);
+  autoResizeColumnsIfNotCalculator(dst, 1, head.length);
   SpreadsheetApp.getActive().toast('✅ Full List USD built\n⚡ Optimized (v4.6.0)', 'Complete', 5);
 }
 
@@ -2141,7 +2162,7 @@ function createAonPlaceholderSheets_() {
       sh.getRange(1, 1, 1, headers.length).setValues([headers]);
       sh.getRange(1, 1, 1, headers.length).setFontWeight('bold');
       sh.setFrozenRows(1);
-      sh.autoResizeColumns(1, headers.length);
+      autoResizeColumnsIfNotCalculator(sh, 1, headers.length);
       // Format numeric columns (percentiles)
       const rows = Math.max(1000, sh.getMaxRows() - 1);
       sh.getRange(2, 3, rows, headers.length - 2).setNumberFormat('#,##0');
@@ -3755,7 +3776,7 @@ function updateLegacyMappingsFromApproved_() {
   }
   
   // Get all approved mappings from Employees Mapped
-  const empVals = empSh.getRange(2,1,empSh.getLastRow()-1,18).getValues();
+  const empVals = empSh.getRange(2,1,empSh.getLastRow()-1,19).getValues();
   const approvedMappings = new Map(); // empID → {jobFamily, fullMapping}
   
   let approvedCount = 0;
@@ -3765,7 +3786,7 @@ function updateLegacyMappingsFromApproved_() {
     const empID = String(row[0] || '').trim();
     const aonCode = String(row[5] || '').trim(); // Column F (index 5)
     const ciqLevel = String(row[7] || '').trim(); // Column H (index 7)
-    const status = String(row[11] || '').trim(); // Column L (index 11) - shifted from K
+    const status = String(row[12] || '').trim(); // Column M (index 12) - shifted from L
     
     // Debug logging for first few rows
     if (approvedCount + skippedCount < 3) {
@@ -4303,13 +4324,13 @@ function syncEmployeesMappedSheet_() {
   
   // Create headers if needed
   if (empSh.getLastRow() === 0) {
-    empSh.getRange(1,1,1,18).setValues([[ 
+    empSh.getRange(1,1,1,19).setValues([[ 
       'Employee ID', 'Employee Name', 'Job Title', 'Department', 'Site',
-      'Aon Code', 'Job Family (Exec Description)', 'Level', 'Full Aon Code', 'Confidence', 'Source', 'Status', 'Base Salary', 'Start Date',
+      'Aon Code', 'Job Family (Exec Description)', 'Level', 'Full Aon Code', 'Mapping Override', 'Confidence', 'Source', 'Status', 'Base Salary', 'Start Date',
       'Recent Promotion', 'Level Anomaly', 'Title Anomaly', 'Market Data Missing'
     ]]);
     empSh.setFrozenRows(1);
-    empSh.getRange(1,1,1,18).setFontWeight('bold');
+    empSh.getRange(1,1,1,19).setFontWeight('bold');
     
     // Highlight editable columns: F (Aon Code) and I (Full Aon Code)
     empSh.getRange(1, 6).setBackground('#FFD966').setNote('✏️ EDITABLE: Enter base Aon Code (e.g., EN.SODE)');  // Column F
@@ -4319,7 +4340,7 @@ function syncEmployeesMappedSheet_() {
   // Get existing mappings (preserve approved ones AND user edits to Full Aon Code)
   const existing = new Map();
   if (empSh.getLastRow() > 1) {
-    const empVals = empSh.getRange(2,1,empSh.getLastRow()-1,18).getValues();
+    const empVals = empSh.getRange(2,1,empSh.getLastRow()-1,19).getValues();
     empVals.forEach(row => {
       if (row[0]) {
         existing.set(String(row[0]).trim(), {
@@ -4327,9 +4348,9 @@ function syncEmployeesMappedSheet_() {
           jobFamilyDesc: row[6] || '',
           level: row[7] || '',
           fullAonCode: row[8] || '',   // Column I - preserve user edits
-          confidence: row[9] || '',
-          source: row[10] || '',
-          status: row[11] || ''
+          confidence: row[10] || '',   // Column K (shifted from J)
+          source: row[11] || '',       // Column L (shifted from K)
+          status: row[12] || ''        // Column M (shifted from L)
         });
       }
     });
@@ -4623,6 +4644,24 @@ function syncEmployeesMappedSheet_() {
       fullAonCode = levelToken ? `${aonCode}.${levelToken}` : aonCode;
     }
     
+    // Check for Mapping Override (Full Aon Code doesn't match ideal F+H combination)
+    let mappingOverride = '';
+    if (aonCode && ciqLevel && fullAonCode) {
+      const levelToken = _ciqLevelToToken_(ciqLevel);
+      const idealFullCode = levelToken ? `${aonCode}.${levelToken}` : aonCode;
+      if (fullAonCode !== idealFullCode) {
+        // User has intentionally overridden - flag it for tracking
+        // Extract just the token part to show what changed
+        const actualToken = fullAonCode.includes('.') ? fullAonCode.split('.').pop() : '';
+        const expectedToken = idealFullCode.includes('.') ? idealFullCode.split('.').pop() : '';
+        if (actualToken && expectedToken && actualToken !== expectedToken) {
+          mappingOverride = `Using ${actualToken} instead of ${expectedToken}`;
+        } else {
+          mappingOverride = `Override: ${fullAonCode} (expected ${idealFullCode})`;
+        }
+      }
+    }
+    
     // Check for recent promotion (last 90 days)
     let recentPromotion = '';
     if (promotionMap.has(empID)) {
@@ -4633,21 +4672,21 @@ function syncEmployeesMappedSheet_() {
       recentPromotion = `Promoted ${timeAgo} - verify mapping`;
     }
     
-    rows.push([empID, name, title, dept, site, aonCode, jobFamilyDesc, ciqLevel, fullAonCode, confidence, source, status, salary, startDate, recentPromotion, levelAnomaly, titleAnomaly, marketDataMissing]);
+    rows.push([empID, name, title, dept, site, aonCode, jobFamilyDesc, ciqLevel, fullAonCode, mappingOverride, confidence, source, status, salary, startDate, recentPromotion, levelAnomaly, titleAnomaly, marketDataMissing]);
   }
   
   // Write to sheet
   SpreadsheetApp.getActive().toast('💾 Writing to sheet...', 'Step 3/3', 2);
-  empSh.getRange(2,1,Math.max(1, empSh.getMaxRows()-1),18).clearContent();
+  empSh.getRange(2,1,Math.max(1, empSh.getMaxRows()-1),19).clearContent();
   if (rows.length) {
-    empSh.getRange(2,1,rows.length,18).setValues(rows);
+    empSh.getRange(2,1,rows.length,19).setValues(rows);
     
-    // Add data validation for Status column (L - still L, no shift)
+    // Add data validation for Status column (M - shifted from L)
     const statusRule = SpreadsheetApp.newDataValidation()
       .requireValueInList(['Needs Review', 'Approved', 'Rejected'], true)
       .setAllowInvalid(false)
       .build();
-    empSh.getRange(2,12,rows.length,1).setDataValidation(statusRule);
+    empSh.getRange(2,13,rows.length,1).setDataValidation(statusRule);
   }
   
   // OPTIMIZATION: Smart conditional formatting skip (only update if rules missing or significant row count change)
@@ -4662,56 +4701,64 @@ function syncEmployeesMappedSheet_() {
   
   // Green: Approved
   rules.push(SpreadsheetApp.newConditionalFormatRule()
-    .whenFormulaSatisfied('=$L2="Approved"')
+    .whenFormulaSatisfied('=$M2="Approved"')  // Column M (shifted from L)
     .setBackground('#D5F5E3')
-    .setRanges([empSh.getRange('A2:R')])  // Updated to R (18 columns)
+    .setRanges([empSh.getRange('A2:S')])  // Updated to S (19 columns)
     .build());
   
   // Yellow: Needs Review
   rules.push(SpreadsheetApp.newConditionalFormatRule()
-    .whenFormulaSatisfied('=$L2="Needs Review"')
+    .whenFormulaSatisfied('=$M2="Needs Review"')  // Column M (shifted from L)
     .setBackground('#FFF9C4')
-    .setRanges([empSh.getRange('A2:R')])  // Updated to R
+    .setRanges([empSh.getRange('A2:S')])  // Updated to S
     .build());
   
   // Red: Rejected or missing mapping
   rules.push(SpreadsheetApp.newConditionalFormatRule()
-    .whenFormulaSatisfied('=OR($L2="Rejected",AND(LEN($A2)>0,OR(LEN($F2)=0,LEN($H2)=0)))')
+    .whenFormulaSatisfied('=OR($M2="Rejected",AND(LEN($A2)>0,OR(LEN($F2)=0,LEN($H2)=0)))')  // Column M
     .setBackground('#FDE7E9')
     .setFontColor('#D32F2F')
-    .setRanges([empSh.getRange('A2:R')])  // Updated to R
+    .setRanges([empSh.getRange('A2:S')])  // Updated to S
     .build());
   
-  // Orange: Recent Promotion (Column O)
+  // Blue: Mapping Override (Column J) - NEW
   rules.push(SpreadsheetApp.newConditionalFormatRule()
-    .whenFormulaSatisfied('=LEN($O2)>0')
-    .setBackground('#FFF4E6')
-    .setFontColor('#E65100')
-    .setRanges([empSh.getRange('O2:O')])
+    .whenFormulaSatisfied('=LEN($J2)>0')
+    .setBackground('#E3F2FD')
+    .setFontColor('#1565C0')
+    .setRanges([empSh.getRange('J2:J')])
     .build());
   
-  // Orange: Level Anomaly (Column P - shifted from O)
+  // Orange: Recent Promotion (Column P - shifted from O)
   rules.push(SpreadsheetApp.newConditionalFormatRule()
     .whenFormulaSatisfied('=LEN($P2)>0')
-    .setBackground('#FFE5CC')
+    .setBackground('#FFF4E6')
     .setFontColor('#E65100')
     .setRanges([empSh.getRange('P2:P')])
     .build());
   
-  // Purple: Title Anomaly (Column Q - shifted from P)
+  // Orange: Level Anomaly (Column Q - shifted from P)
   rules.push(SpreadsheetApp.newConditionalFormatRule()
     .whenFormulaSatisfied('=LEN($Q2)>0')
-    .setBackground('#E1D5F7')
-    .setFontColor('#6A1B9A')
+    .setBackground('#FFE5CC')
+    .setFontColor('#E65100')
     .setRanges([empSh.getRange('Q2:Q')])
     .build());
   
-  // Red: Market Data Missing (Column R - shifted from Q)
+  // Purple: Title Anomaly (Column R - shifted from Q)
   rules.push(SpreadsheetApp.newConditionalFormatRule()
     .whenFormulaSatisfied('=LEN($R2)>0')
+    .setBackground('#E1D5F7')
+    .setFontColor('#6A1B9A')
+    .setRanges([empSh.getRange('R2:R')])
+    .build());
+  
+  // Red: Market Data Missing (Column S - shifted from R)
+  rules.push(SpreadsheetApp.newConditionalFormatRule()
+    .whenFormulaSatisfied('=LEN($S2)>0')
     .setBackground('#FFCDD2')
     .setFontColor('#B71C1C')
-    .setRanges([empSh.getRange('R2:R')])
+    .setRanges([empSh.getRange('S2:S')])
     .build());
   
     empSh.setConditionalFormatRules(rules);
@@ -4720,11 +4767,12 @@ function syncEmployeesMappedSheet_() {
     Logger.log(`Skipped conditional formatting (${existingRules.length} rules already present)`);
   }
   
-  empSh.autoResizeColumns(1,18);
+  autoResizeColumnsIfNotCalculator(empSh, 1, 19);
   
   // Count issues
-  const recentPromotionCount = rows.filter(row => row[14] && row[14].length > 0).length; // Column O (index 14)
-  const marketDataMissingCount = rows.filter(row => row[17] && row[17].length > 0).length; // Column R (index 17)
+  const mappingOverrideCount = rows.filter(row => row[9] && row[9].length > 0).length; // Column J (index 9)
+  const recentPromotionCount = rows.filter(row => row[15] && row[15].length > 0).length; // Column P (index 15)
+  const marketDataMissingCount = rows.filter(row => row[18] && row[18].length > 0).length; // Column S (index 18)
   
   const totalProcessed = rows.length + filteredCount;
   let msg = `✅ Synced ${rows.length} employees (${filteredCount} old exits filtered):\n\n` +
@@ -4732,6 +4780,10 @@ function syncEmployeesMappedSheet_() {
     `📋 Legacy: ${legacyCount}\n` +
     `🔍 Title-Based: ${titleBasedCount}\n` +
     `⚠️ Needs Review: ${needsReviewCount}\n`;
+  
+  if (mappingOverrideCount > 0) {
+    msg += `\n🔵 Mapping Overrides: ${mappingOverrideCount} employees (using rollup/custom codes)\n`;
+  }
   
   if (recentPromotionCount > 0) {
     msg += `\n📈 Recent Promotions: ${recentPromotionCount} employees (verify mappings)\n`;
@@ -5281,7 +5333,7 @@ function _preIndexEmployeesForCR_() {
   }
   
   // Read employees ONCE
-  const empVals = empSh.getRange(2,1,empSh.getLastRow()-1,18).getValues();
+  const empVals = empSh.getRange(2,1,empSh.getLastRow()-1,19).getValues();
   const execMap = _getExecDescMap_();
   const cutoffDate = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000);
   
@@ -5290,9 +5342,9 @@ function _preIndexEmployeesForCR_() {
     const aonCode = String(row[5] || '').trim();
     const empLevel = String(row[7] || '').trim(); // Column H
     const empSite = String(row[4] || '').trim();
-    const status = String(row[11] || '').trim(); // Column L (shifted from K)
-    const salary = row[12]; // Column M (shifted from L)
-    const startDate = row[13]; // Column N (shifted from M)
+    const status = String(row[12] || '').trim(); // Column M (shifted from L)
+    const salary = row[13]; // Column N (shifted from M)
+    const startDate = row[14]; // Column O (shifted from N)
     
     if (status !== 'Approved' || !salary || isNaN(salary) || salary <= 0) return;
     
