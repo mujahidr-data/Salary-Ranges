@@ -14,238 +14,9 @@
  * - Persistent legacy mapping storage
  * - Interactive calculator UI
  * 
- * @version 4.28.1
- * @date 2025-11-28
- * @performance Highly optimized with strategic caching and batch operations:
- *   - Pre-loaded Aon data: Saves 10,080+ sheet reads (~95% faster market data build)
- *   - Pre-indexed employees: Saves 1,440 full scans (~80% faster CR calculations)
- *   - Smart conditional formatting: Only updates when needed (saves 2-3s per import)
- *   - Sheet data caching: 10-min cache, 7 strategic points (reduces redundant reads)
- *   - Employee-title index: Eliminates O(n²) loops (~99% faster anomaly detection)
- *   - Legacy mappings batch load: Saves 600+ lookups (~90% faster mapping resolution)
- *   - Pre-indexed CR groups: ~98% faster CR calculations (Map-based grouping)
- *   - Reduced sleep timers: 500ms→300ms, 1000ms→500ms (~40% faster workflows)
- * @changelog v4.28.1 - HOTFIX: Site normalization missing in CR calculation
- *   - USER REPORT: "i dont think it worked" (after v4.28.0 fix)
- *   - PROBLEM: v4.28.0 fixed aonCode mismatch but CR still blank
- *   - ROOT CAUSE: Site/region normalization mismatch (US vs USA):
- *     • Internal stats: normalizes "US" → "USA" (line 1715) ✓
- *     • CR index: used raw "US" (line 5782) ❌
- *     • CR lookup: used raw "US" (line 6037) ❌
- *   - RESULT: Keys never matched even after v4.28.0 aonCode fix:
- *     • Internal stats: "USA|EN.SODE|L5 IC" (normalized)
- *     • CR index: "US|EN.SODE|L5 IC" (not normalized)
- *     • CR lookup: "US|EN.SODE|L5 IC" (not normalized)
- *   - THE FIX (Lines 5779-5782):
- *     Added site normalization in _preIndexEmployeesForCR_():
- *     const normSite = empSite === 'US' ? 'USA' : ...
- *     const key = `${normSite}|${aonCode}|${empLevel}`;
- *   - THE FIX (Lines 6037-6038):
- *     Added region normalization in Full List CR lookup:
- *     const crRegion = region === 'US' ? 'USA' : region;
- *     const empKey = `${crRegion}|${aonCode}|${ciqLevel}`;
- *   - ENHANCED DEBUGGING:
- *     • CR index logs now show normalized region
- *     • CR lookup logs show both raw and normalized region
- *   - IMPACT: NOW all three use consistent key: "USA|EN.SODE|L5 IC"
- *   - ACTION: User must run "Build Market Data" again (now it will work!)
- * @previous v4.28.0 - CRITICAL FIX: Avg CR not populating despite having employees
- *   - USER REPORT: "why is avg cr not being created for these even though there are employees"
- *   - PROBLEM: Full List showed Emp Count (1, 2, 15...) but Avg CR was blank
- *   - ROOT CAUSE: Key format mismatch between internal stats and CR calculations:
- *     • Internal stats (_buildInternalIndex_): `${region}|${aonCode}|${level}` ✓
- *       Example: "USA|EN.SODE|L5 IC"
- *     • CR calculation (_preIndexEmployeesForCR_): `${site}|${execDesc}|${level}` ❌
- *       Example: "US|Engineering - Software Development|L5 IC"
- *     • Full List lookup: `${region}|${execDesc}|${ciqLevel}` ❌
- *       Looked for description, but CR index used description, internal used code!
- *   - RESULT: Keys never matched → CR lookups always returned empty
- *   - THE FIX (Lines 5753-5759):
- *     • Changed _preIndexEmployeesForCR_() to use aonCode directly (not execDesc)
- *     • Changed Full List lookup (line 6002) to use aonCode (not execDesc)
- *     • Now both use: `${region}|${aonCode}|${level}` ✓
- *   - ADDED DEBUGGING:
- *     • Log first 5 CR index keys with employee counts
- *     • Log first 5 CR lookups showing if key found + employee count
- *     • Summary: "X out of Y combinations have Avg CR values"
- *   - IMPACT: Avg CR, TT CR, New Hire CR, BT CR will now populate correctly!
- *   - ACTION: User must run "Build Market Data" to regenerate with correct keys
- * @previous v4.27.0 - UX IMPROVEMENT: Hide zeros in Emp Count column on calculators
- *   - USER REQUEST: "add formatting so that 0 are hidden for emp count similar to how other rows without data are blank"
- *   - PROBLEM: Emp Count column showed "0" for levels with no employees, cluttering the view
- *   - SOLUTION: Applied number format "0;-0;;@" to hide zeros (shows blank instead)
- *   - APPLIED TO:
- *     1. Engineering and Product (X0) calculator - via applyCurrency_() function
- *     2. Everyone Else (Y1) calculator - via buildCalculatorUIForY1_() function
- *   - RESULT: Cleaner calculator view - only levels with employees show counts
- *   - ACTION: Run "Rebuild Calculator Formulas" to apply formatting to existing sheets
- * @previous v4.26.1 - BUGFIX: Range Progression Review "Missing columns" error
- *   - USER REPORT: "error during range progression" with error "Missing columns in Full List: Aon Code"
- *   - ROOT CAUSE: Column name mismatch between Full List schema and Range Progression functions:
- *     • Full List uses: "Aon Code (base)" ✓
- *     • reviewRangeProgression() expected: "Aon Code" ❌
- *     • applyRangeCorrections() expected: "Aon Code" ❌ (2 instances)
- *   - RESULT: Range Progression Review failed immediately with missing column error
- *   - FIXED: Updated 3 references to use correct column name "Aon Code (base)":
- *     • reviewRangeProgression(): Line 6803 (requiredCols) + Line 6822 (data reading)
- *     • applyRangeCorrections(): Line 7118 (Full List update) + Line 7149 (Full List USD update)
- *   - IMPACT: Range Progression Review now works correctly
- * @previous v4.26.0 - CRITICAL FIX: CR values showing when employee count is 0
- *   - USER REPORT: "how do we have avg cr when there are no employees?"
- *   - ROOT CAUSE: Active/Inactive filter mismatch between two functions:
- *     1. _buildInternalIndex_() counted ONLY active employees ✓
- *     2. _preIndexEmployeesForCR_() calculated CR using ALL employees (active + inactive) ❌
- *   - RESULT: Rows with 0 active but some inactive employees showed:
- *     • Emp Count = 0 (only active)
- *     • Avg CR = 0.93 (includes inactive) ← IMPOSSIBLE!
- *   - FIXED: Added active status filter to _preIndexEmployeesForCR_():
- *     • Reads Base Data to build activeStatusMap (same as _buildInternalIndex_)
- *     • Checks isActive before including employee in CR calculations
- *     • Added logging: "Skipped X inactive employees"
- *   - IMPACT: CR calculations now match employee counts (both use same active filter)
- *   - ACTION: User must run "Build Market Data" to regenerate CR with correct filter
- * @previous v4.25.1 - HOTFIX: Cannot access fullAonCode before initialization
- *   - CRITICAL: Import Bob Data failed with "Cannot access 'fullAonCode' before initialization"
- *   - CAUSE: v4.25.0 changed Level Anomaly to use fullAonCode, but it was USED at line 4725 
- *     before being DEFINED at line 4786 (JavaScript temporal dead zone error)
- *   - FIX: Moved fullAonCode building from line 4786 → line 4719 (before anomaly detection)
- *   - REMOVED: Duplicate fullAonCode building at old location
- *   - RESULT: Import Bob Data now completes, Level Anomaly works correctly
- * @previous v4.25.0 - BUGFIX: Level Anomaly blank + Enhanced debugging
- *   - FIXED: Level Anomaly checked wrong column (aonCode vs fullAonCode)
- *   - BUG: Line 4715 checked `aonCode` (Column F = base code "EN.SODE") with no token
- *   - FIX: Now checks `fullAonCode` (Column I = "EN.SODE.P5") to extract token
- *   - RESULT: Level Anomaly will now populate when Bob level ≠ Full Aon Code token
- *   - ADDED: Debug logging for Recent Promotion detection (shows cutoff date + count)
- *   - ADDED: Debug logging for first 3 employees (verify anomaly detection working)
- *   - ADDED: Summary counts in import complete message (Level + Title anomalies)
- *   - IMPROVED: Better logging for Comp History column detection
- *   - ACTION: User should re-import to see Level Anomaly populate correctly
- * @previous v4.24.0 - BUGFIX: New Hire CR not populating (status filter too strict)
- *   - FIXED: _preIndexEmployeesForCR_() only included "Approved" status
- *   - PROBLEM: Most employees have "Legacy" status, were being excluded
- *   - SOLUTION: Now includes both "Approved" AND "Legacy" status
- *   - IMPACT: New Hire CR will now populate for recently hired employees
- *   - ADDED: Debug logging to track new hire detection (first 5 + total count)
- *   - VALIDATES: Start Date is Date object, within 365 days, has valid salary
- *   - NOTE: Start Date IS in Employees Mapped Column O (copied from Base Data)
- *   - RESULT: New Hire CR column should now show values for recent hires
- * @previous v4.23.0 - FEATURE: Smart currency rounding for cleaner ranges
- *   - ADDED: Region-based currency rounding in Full List generation
- *   - India: Round to nearest ₹1,000 (e.g., 1,234,567 → 1,235,000)
- *   - US: Round to nearest $100 (e.g., $123,456 → $123,500)
- *   - UK: Round to nearest £100 (e.g., £123,456 → £123,500)
- *   - APPLIES TO: All percentile columns (P10-P90) + Range Start/Mid/End
- *   - FULL LIST USD: Only rounds US rows (UK/India already rounded in local currency)
- *   - LOGIC: Cleaner numbers for external communication and offers
- *   - IMPACT: More professional-looking salary ranges (no odd cents/paise)
- * @previous v4.22.0 - CRITICAL BUGFIX: Internal stats reading wrong columns
- *   - FIXED: _buildInternalIndex_() was reading outdated column positions
- *   - BUG: After adding new columns (Mapping Override, Recent Promotion), indices not updated
- *   - WRONG: Reading only 13 columns (should be 19)
- *   - WRONG: iStatus = 10 (Column K = Confidence) → FIXED: = 12 (Column M = Status)
- *   - WRONG: iSalary = 11 (Column L = Source) → FIXED: = 13 (Column N = Base Salary)
- *   - IMPACT: Internal Min/Median/Max/Count were calculated from WRONG data
- *   - RESULT: Internal stats now correctly read Base Salary column
- *   - NOTE: CR calculations (_preIndexEmployeesForCR_) were already correct
- * @previous v4.21.0 - FEATURE: Add Rebuild Lookup Sheet menu item
- *   - NEW FUNCTION: rebuildLookupSheet() - User-facing wrapper
- *   - CLEANED: Removed duplicate/obsolete Aon codes from hardcoded list
- *   - REMOVED: CB.0000, CB.ADEA, CB.ADAA (duplicate exec assistant/workplace codes)
- *   - REMOVED: EN.DVEX (duplicate architect code - kept EN.DVDE)
- *   - REMOVED: Duplicate HR.TATA entry
- *   - TOTAL: 71 codes → 67 codes (cleaner, no functional duplicates)
- *   - SOURCE: Updated to match user's verified production mapping
- *   - IMPACT: Cleaner Lookup sheet, no confusion with redundant codes
- *   - NOTE: Mapping is HARDCODED - not generated from Aon sheets
- * @previous v4.19.0 - ENHANCEMENT: Suppress .5 level warnings (reduce noise)
- *   - IMPROVED: Column S no longer flags .5 levels as "No market data"
- *   - FIXED: Executive level mappings now match Lookup table exactly
- *   - NEW FUNCTION: refreshMarketDataAvailability() - Quick refresh of Column S
- *   - REDUCED: Utilities.sleep() timers (500ms→300ms, 1000ms→500ms)
- *   - FASTER: Fresh Build (7s→5.5s), Import Bob Data (90s→75s)
- *   - REMOVED: 10+ deprecated functions (cleaned 200+ lines of dead code)
- *   - Removed: listExecMappings_(), upsertExecMapping_(), deleteExecMapping_()
- *   - Removed: openExecMappingManager_(), seedExecMappingsFromAon_(), fillRegionFamilies_()
- *   - Removed: syncAllBobMappings_(), seedAllJobFamilyMappings_(), quickSetup_()
- *   - MENU REORGANIZATION: Intuitive workflow-based structure
- *   - New structure: Quick Start → 3-Step Workflow → Review & Quality → Advanced Tools → Help
- *   - NEW: "Quick Start Guide" menu item (3-step workflow overview)
- *   - NEW: "What's New (v4.14)" menu item (version highlights)
- *   - UPDATED: Quick Instructions dialog (modern HTML, all new features documented)
- *   - UPDATED: Help Sheet generation (v4.9-v4.14 features, QA workflow, tips)
- *   - IMPROVED: Help sheet now shows alert when complete (clear feedback)
- *   - LOGGING: Reviewed 94 Logger.log calls - all justified (conditional/errors/summaries only)
- *   - Code quality: More maintainable, better organized, clearer user guidance
- * @previous v4.14.0 - FEATURE: Mapping Override detection + Auto-justify all sheets
- *   - NEW COLUMN: "Mapping Override" (column J) flags when Full Aon Code ≠ ideal F+H
- *   - AUTO-JUSTIFY: All sheets auto-resize EXCEPT calculators (preserves user formatting)
- * @previous v4.13.0 - FEATURE: Recent Promotion detection and flagging
- *   - NEW COLUMN: "Recent Promotion" (column O) flags employees promoted in last 90 days
- *   - Data source: Comp History table, "History reason" column
- * @previous v4.12.0 - UX: Full Aon Code persistence + Better notifications
- *   - PERSISTENCE: Full Aon Code (Column I) now preserved across imports
- *   - VISUAL: Yellow headers on editable columns (F: Aon Code, I: Full Aon Code)
- *   - NOTIFICATIONS: Important messages now center-screen alerts
- * @previous v4.11.0 - FEATURE: Full Aon Code column in Employees Mapped
- *   - NEW COLUMN: "Full Aon Code" (column I) shows complete code with level
- *   - Example: Base "EN.SODE" + Level "L3 IC" → Full "EN.SODE.P3"
- * @previous v4.10.1 - CRITICAL FIX: Column mismatch in Employees Mapped (15→16)
- *   - Error: "The data has 16 but the range has 15"
- *   - Root cause: v4.9.0 added Market Data Missing column (16th)
- *   - Fixed 4 locations: clearContent, setValues, and 2× getValues
- *   - NEW: Review Range Progression - Analyzes Full List for range violations
- *   - NEW: Apply Range Corrections - Updates Full List with approved changes
- *   - Detects: Ranges that decrease or stay flat as levels increase
- *   - Groups by: Region + Job Family, sorts by level order
- *   - Checks: Range Start, Range Mid, Range End progression
- *   - Creates: "Range Progression Issues" sheet with flagged violations
- *   - Shows: Issue description, current vs previous level values
- *   - Suggests: Recommended values (15% increase over previous level)
- *   - Workflow: Review → Edit recommendations → Approve → Apply
- *   - Status tracking: Pending → Approved → Applied
- *   - Updates both Full List and Full List USD with corrections
- *   - Example: "L6 IC Range Mid (₹1,000,000) ≤ L5 IC Range Mid (₹1,200,000)"
- *   - Menu: Tools → Review Range Progression, Tools → Apply Range Corrections
- * @previous v4.9.1 - FIX: .5 level progression when upper level is blank
- *   - Issue: L5.5 IC = L5 IC (no progression) when L6 IC is blank
- *   - Fix: L5.5 IC = L5 IC × 1.2 (20% uplift) when L6 IC is blank
- *   - New column P: "Market Data Missing" flags employees with no Aon data
- *   - Fixed misleading "0 new mappings" message when updating existing mappings
- *   - Now shows: "X updated, Y new" instead of just "Y new"
- *   - Added change detection: Only updates if Aon Code or Level actually changed
- *   - Added detailed logging: Shows old → new values for first 3 changes
- *   - Clearer messages: "No changes (all approved mappings already in storage)"
- *   - Issue: User changed approved mapping, got "0 new" but update did work
- * @previous v4.7.3 - CRITICAL FIX: Internal stats now currency-aware
- *   - Internal Min/Med/Max/Emp Count now switch between Local and USD
- *   - Bug: Internal stats included inactive employees (exits after Jan 1, 2024)
- *   - Fix: Cross-reference with Base Data to check Active/Inactive status
- *   - Build active status index from Base Data ONCE (Map: empID → isActive)
- *   - Only include employees where activeStatusMap.get(empID) === true
- *   - Aligns with requirement: Internal stats = active employees only
- *   - Updated logging to show skipped inactive count
- * @previous v4.6.7 - CRITICAL HOTFIX: Fix internal stats by reading from Employees Mapped
- *   - Bug: Internal Min/Med/Max/Count showing 0 or blank in Full List and calculators
- *   - Root cause: _buildInternalIndex_() was reading from Base Data which doesn't have Job Family Name column
- *   - Fix: Changed to read from Employees Mapped sheet (which has Aon Code column)
- *   - Now matches same data source as CR calculations (which are working)
- *   - Only includes employees with status='Approved' or 'Legacy' (confirmed mappings)
- *   - Key format unchanged: "Region|AonCode|Level" (e.g., "USA|EN.SODE|L5 IC")
- * @previous v4.6.6 - CRITICAL HOTFIX: Preserve approved mappings across Fresh Build
- *   - Bug: After approving mappings + running Fresh Build, all mappings reset to "Needs Review"
- *   - Root cause: Legacy mappings loaded from storage had no 'status' field
- *   - Fix 1: _loadAllLegacyMappings_() now sets status: 'Approved' for all loaded mappings
- *   - Fix 2: syncEmployeesMappedSheet_() uses legacy.status if present (defaults to 'Legacy')
- *   - Result: Approved mappings stay approved after Fresh Build or Import Bob Data
- * @previous v4.6.5-debug - Added logging for calculator dropdown creation issue
- *   - Issue: Job Family dropdown not appearing in calculator sheets
- *   - Added logging to _getExecDescMap_() to show Lookup sheet reading
- *   - Added logging to buildCalculatorUI_() to show X0 families found
- *   - Added logging to buildCalculatorUIForY1_() to show Y1 families found
- *   - Fixed section detection: removed 'Aon Code' from stop condition (was preventing data read)
- *   - Shows warnings if no families found (Lookup sheet empty/missing)
- * @previous v4.6.4 - CRITICAL HOTFIX: Fixed calculator formulas (wrong lookup column)
+ * @version 4.6.4
+ * @date 2025-11-27
+ * @changelog v4.6.4 - CRITICAL HOTFIX: Fixed calculator formulas (wrong lookup column)
  *   - Bug: Calculator formulas looking up in column U (Avg CR) instead of column Y (Key)
  *   - Result: Range Start/Mid/End were blank, Internal Min/Med/Max/Count were blank
  *   - Fix: Changed all XLOOKUP formulas to use 'Full List'!$Y:$Y for lookup array
@@ -347,22 +118,6 @@ const WRITE_COLS_LIMIT = 23; // Column W limit for Base Data sheet
  */
 function normalizeString(s) {
   return String(s || "").toLowerCase().replace(/\s+/g, " ").trim();
-}
-
-/**
- * Auto-resize columns in a sheet, but skip calculator sheets (user manually formats those)
- * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet - Sheet to auto-resize
- * @param {number} startColumn - Starting column (1-based)
- * @param {number} numColumns - Number of columns to resize
- */
-function autoResizeColumnsIfNotCalculator(sheet, startColumn, numColumns) {
-  const sheetName = sheet.getName();
-  // Skip calculator sheets - user manually formats these
-  if (sheetName.toLowerCase().includes('calculator')) {
-    Logger.log(`Skipping auto-resize for calculator sheet: ${sheetName}`);
-    return;
-  }
-  sheet.autoResizeColumns(startColumn, numColumns);
 }
 
 /**
@@ -634,7 +389,7 @@ function importBobDataSimpleWithLookup() {
       sheet.getRange(2, idxBasePay + 1, numRows, 1).setNumberFormat("#,##0.00");
     }
     
-    autoResizeColumnsIfNotCalculator(sheet, 1, numCols);
+    sheet.autoResizeColumns(1, numCols);
     Logger.log(`Successfully imported ${sheetName} (preserved custom columns beyond column ${numCols})`);
     
   } catch (error) {
@@ -724,7 +479,7 @@ function importBobBonusHistoryLatest() {
       sheet.getRange(2, 6, numRows, 1).setNumberFormat("#,##0.00"); // Amount
     }
     
-    autoResizeColumnsIfNotCalculator(sheet, 1, numCols);
+    sheet.autoResizeColumns(1, numCols);
     Logger.log(`Successfully imported ${targetSheetName} (preserved custom columns beyond column ${numCols})`);
     
   } catch (error) {
@@ -808,7 +563,7 @@ function importBobCompHistoryLatest() {
       sheet.getRange(2, 4, numRows, 1).setNumberFormat("#,##0.00"); // Salary
     }
     
-    autoResizeColumnsIfNotCalculator(sheet, 1, numCols);
+    sheet.autoResizeColumns(1, numCols);
     Logger.log(`Successfully imported ${targetSheetName} (preserved custom columns beyond column ${numCols})`);
     
   } catch (error) {
@@ -1359,77 +1114,29 @@ function applyCurrency_() {
   };
   const cfmt = formats[region] || '#,##0;#,##0;;@';
 
-  // Find header row (search first 30 rows for Level + Range Start/Mid/End OR Min/Median/Max)
+  // Find header row (search first 30 rows for Level/P62.5/P75/P90)
   const maxHdrRows = Math.min(30, sh.getLastRow());
   let headerRow = -1; let headers = [];
   for (let r=1; r<=maxHdrRows; r++) {
     const row = sh.getRange(r,1,1,Math.max(20, sh.getLastColumn())).getDisplayValues()[0].map(v=>String(v||'').trim());
-    // Check for new format (Level + Range Start/Mid/End) OR old format (Level + P62.5)
-    const hasLevel = row.some(v=>/^Level$/i.test(v));
-    const hasNewFormat = row.some(v=>/^Range\s*Start$/i.test(v)) && row.some(v=>/^Range\s*Mid$/i.test(v));
-    const hasOldFormat = row.some(v=>/^P\s*62\.?5$/i.test(v));
-    
-    if (hasLevel && (hasNewFormat || hasOldFormat)) { 
-      headerRow = r; 
-      headers = row; 
-      break; 
-    }
+    if (row.some(v=>/^Level$/i.test(v)) && row.some(v=>/^P\s*62\.?5$/i.test(v)) && row.some(v=>/^P\s*75$/i.test(v))) { headerRow = r; headers = row; break; }
   }
-  if (headerRow === -1) {
-    SpreadsheetApp.getActive().toast('⚠️ Could not find calculator headers. Make sure you\'re on a calculator sheet.', 'Apply Currency', 5);
-    return;
-  }
+  if (headerRow === -1) return; // nothing to format
 
   // Locate columns by label
   const colIndex = (labelRegex) => headers.findIndex(h => new RegExp(labelRegex,'i').test(h)) + 1;
-  
-  // New format columns (Range Start/Mid/End)
-  const cRangeStart = colIndex('^Range\\s*Start$');
-  const cRangeMid = colIndex('^Range\\s*Mid$');
-  const cRangeEnd = colIndex('^Range\\s*End$');
-  
-  // Old format columns (P62.5, P75, P90)
-  const cP625 = colIndex('^P\\s*62\\.?5$');
-  const cP75  = colIndex('^P\\s*75$');
-  const cP90  = colIndex('^P\\s*90$');
-  
-  // Internal stats columns (same in both formats)
+  const cP625 = colIndex('^P\s*62\.?5$');
+  const cP75  = colIndex('^P\s*75$');
+  const cP90  = colIndex('^P\s*90$');
   const cMin  = colIndex('^Min$');
   const cMed  = colIndex('^Median$');
   const cMax  = colIndex('^Max$');
-  const cEmp  = colIndex('^Emp\\s*Count$');
-  
+  const cEmp  = colIndex('^Emp\s*Count$');
   const lastRow = Math.max(headerRow+1, sh.getLastRow());
 
   const maybeFormatCol = (c, fmt) => { if (c > 0) _setFmtIfNeeded_(sh.getRange(headerRow+1, c, lastRow - headerRow, 1), fmt); };
-  
-  // Format all relevant columns (new format OR old format)
-  let formattedCount = 0;
-  [cRangeStart, cRangeMid, cRangeEnd, cP625, cP75, cP90, cMin, cMed, cMax].forEach(c => {
-    if (c > 0) {
-      maybeFormatCol(c, cfmt);
-      formattedCount++;
-    }
-  });
-  
-  // Format Emp Count column to hide zeros (show blank instead)
-  if (cEmp > 0) {
-    _setFmtIfNeeded_(sh.getRange(headerRow+1, cEmp, lastRow - headerRow, 1), '0;-0;;@');
-  }
-  if (cEmp > 0) {
-    maybeFormatCol(cEmp, '0;0;;@');
-    formattedCount++;
-  }
-  
-  // Show success message
-  const currencySymbol = region === 'India' ? '₹' : region === 'UK' ? '£' : '$';
-  SpreadsheetApp.getActive().toast(
-    `✅ Applied ${currencySymbol} format to ${formattedCount} column${formattedCount === 1 ? '' : 's'}\n` +
-    `Region: ${region || 'Default'}\n` +
-    `Sheet: ${sh.getName()}`,
-    'Currency Format',
-    5
-  );
+  [cP625, cP75, cP90, cMin, cMed, cMax].forEach(c => maybeFormatCol(c, cfmt));
+  if (cEmp > 0) maybeFormatCol(cEmp, '0;0;;@');
 }
 
 /********************************
@@ -1475,9 +1182,6 @@ function _getExecDescMap_() {
   if (lookupSh) {
     const vals = lookupSh.getDataRange().getValues();
     let inAonCodeSection = false;
-    let aonCodesRead = 0;
-    
-    Logger.log(`_getExecDescMap_: Reading Lookup sheet, ${vals.length} total rows`);
     
     for (let r = 0; r < vals.length; r++) {
       const row = vals[r];
@@ -1490,15 +1194,13 @@ function _getExecDescMap_() {
       // Detect Aon Code section header
       if (col1 === 'Aon Code' && /Job.*Family.*Exec/i.test(col2)) {
         inAonCodeSection = true;
-        Logger.log(`  Found Aon Code section header at row ${r+1}`);
         continue;
       }
       
       // Stop at next section (new header row)
-      if (inAonCodeSection && (col1 === 'CIQ Level' || col1 === 'Region')) {
+      if (inAonCodeSection && (col1 === 'CIQ Level' || col1 === 'Region' || col1 === 'Aon Code')) {
         inAonCodeSection = false;
-        Logger.log(`  Reached end of Aon Code section at row ${r+1}`);
-        break;
+        continue;
       }
       
       // Only read Aon Code section data
@@ -1506,17 +1208,9 @@ function _getExecDescMap_() {
         // Validate it's an Aon code format (XX.YYYY, not L5.5 IC)
         if (/^[A-Z]{2}\.[A-Z0-9]{4}$/i.test(col1)) {
           map.set(col1, col2);
-          aonCodesRead++;
-          if (aonCodesRead <= 3) {
-            Logger.log(`  Read: ${col1} → ${col2}`);
-          }
         }
       }
     }
-    
-    Logger.log(`_getExecDescMap_: Read ${aonCodesRead} Aon codes from Lookup sheet`);
-  } else {
-    Logger.log('_getExecDescMap_: Lookup sheet not found!');
   }
   
   // Fall back to Job family Descriptions sheet if Lookup doesn't have mappings
@@ -1558,9 +1252,6 @@ function _getCategoryMap_() {
   if (lookupSh) {
     const vals = lookupSh.getDataRange().getValues();
     let inAonCodeSection = false;
-    let categoriesRead = 0;
-    
-    Logger.log(`_getCategoryMap_: Reading Lookup sheet, ${vals.length} total rows`);
     
     for (let r = 0; r < vals.length; r++) {
       const row = vals[r];
@@ -1571,15 +1262,13 @@ function _getCategoryMap_() {
       const col3 = String(row[2] || '').trim().toUpperCase();
       
       // Detect Aon Code section header
-      if (col1 === 'Aon Code' && /Job.*Family.*Exec/i.test(col2) && col3 === 'CATEGORY') {
+      if (col1 === 'Aon Code' && /Job.*Family.*Exec/i.test(col2) && col3 === 'Category') {
         inAonCodeSection = true;
-        Logger.log(`  Found Aon Code section header at row ${r+1}`);
         continue;
       }
       
       // Stop at next section (new header row with different pattern)
       if (inAonCodeSection && (col1 === 'CIQ Level' || col1 === 'Region')) {
-        Logger.log(`  Reached end of Aon Code section at row ${r+1}`);
         break; // No more Aon Code section after this
       }
       
@@ -1588,17 +1277,9 @@ function _getCategoryMap_() {
         // Validate it's an Aon code format (XX.YYYY, not L5.5 IC)
         if (/^[A-Z]{2}\.[A-Z0-9]{4}$/i.test(col1)) {
           map.set(col1, col3);
-          categoriesRead++;
-          if (categoriesRead <= 3) {
-            Logger.log(`  Read: ${col1} → ${col3}`);
-          }
         }
       }
     }
-    
-    Logger.log(`_getCategoryMap_: Read ${categoriesRead} categories from Lookup sheet`);
-  } else {
-    Logger.log('_getCategoryMap_: Lookup sheet not found!');
   }
   
   _cachePut_(cacheKey, Array.from(map.entries()), CACHE_TTL);
@@ -1642,121 +1323,90 @@ function _isNum_(v) { return v !== '' && v != null && isFinite(Number(v)); }
 
 function _buildInternalIndex_() {
   const ss = SpreadsheetApp.getActive();
-  const empSh = ss.getSheetByName(SHEET_NAMES.EMPLOYEES_MAPPED);
-  const baseSh = ss.getSheetByName(SHEET_NAMES.BASE_DATA);
+  const sh = ss.getSheetByName('Base Data');
   const out = new Map();
-  
-  if (!empSh || empSh.getLastRow() <= 1) {
-    Logger.log('WARNING: Employees Mapped sheet not found or empty - internal stats will be blank');
-    return out;
-  }
-  
-  if (!baseSh || baseSh.getLastRow() <= 1) {
-    Logger.log('WARNING: Base Data sheet not found or empty - cannot check active status');
+  if (!sh) {
+    Logger.log('ERROR: Base Data sheet not found!');
     return out;
   }
 
-  // Build active status index from Base Data
-  const baseVals = baseSh.getDataRange().getValues();
-  const baseHead = baseVals[0].map(h => String(h || ''));
-  const iBaseEmpID = baseHead.findIndex(h => /Emp.*ID|Employee.*ID/i.test(h));
-  const iBaseActive = baseHead.findIndex(h => /Active.*Inactive/i.test(h));
+  const values = _getSheetDataCached_(sh); // OPTIMIZED: Use cached data
+  const head = values[0].map(h => String(h || ''));
   
-  const activeStatusMap = new Map(); // empID → isActive
-  if (iBaseEmpID >= 0 && iBaseActive >= 0) {
-    for (let r = 1; r < baseVals.length; r++) {
-      const empID = String(baseVals[r][iBaseEmpID] || '').trim();
-      const activeStatus = String(baseVals[r][iBaseActive] || '').toLowerCase();
-      if (empID) {
-        activeStatusMap.set(empID, activeStatus === 'active');
-      }
-    }
-    Logger.log(`Built active status index: ${activeStatusMap.size} employees`);
-  } else {
-    Logger.log('WARNING: Could not find Emp ID or Active/Inactive columns in Base Data!');
+  Logger.log(`Base Data headers (first 15): ${head.slice(0, 15).join(', ')}`);
+  
+  const colFam  = head.indexOf('Job Family Name');
+  const colMapN = head.indexOf('Mapped Family');
+  const colAct  = head.indexOf('Active/Inactive');
+  const colSite = head.indexOf('Site');
+  const colLvl  = head.indexOf('Job Level');
+  const colPay  = head.indexOf('Base salary');
+  
+  Logger.log(`Base Data column indices: Job Family Name=${colFam}, Mapped Family=${colMapN}, Active/Inactive=${colAct}, Site=${colSite}, Job Level=${colLvl}, Base salary=${colPay}`);
+  
+  if ([colFam,colAct,colSite,colLvl,colPay].some(i => i < 0)) {
+    Logger.log('ERROR: One or more required columns not found in Base Data!');
     return out;
   }
-
-  const values = empSh.getRange(2, 1, empSh.getLastRow() - 1, 19).getValues();
-  
-  Logger.log(`Reading internal stats from Employees Mapped sheet: ${values.length} employees`);
-  
-  // Employees Mapped columns (19 total): 
-  // A: Employee ID, B: Name, C: Job Title, D: Department, E: Site
-  // F: Aon Code, G: Job Family (Exec Description), H: Level, I: Full Aon Code, J: Mapping Override
-  // K: Confidence, L: Source, M: Status, N: Base Salary, O: Start Date
-  // P: Recent Promotion, Q: Level Anomaly, R: Title Anomaly, S: Market Data Missing
-  const iEmpID = 0;     // Column A: Employee ID
-  const iSite = 4;      // Column E: Site
-  const iAonCode = 5;   // Column F: Aon Code
-  const iLevel = 7;     // Column H: Level
-  const iStatus = 12;   // Column M: Status (FIXED: was 10 = K = Confidence!)
-  const iSalary = 13;   // Column N: Base Salary (FIXED: was 11 = L = Source!)
 
   const buckets = new Map();
   let processedCount = 0;
   let skippedInactive = 0;
-  let skippedNoMapping = 0;
-  let skippedNoSalary = 0;
+  let skippedMissingData = 0;
   
-  for (let r = 0; r < values.length; r++) {
+  for (let r=1; r<values.length; r++) {
     const row = values[r];
-    
-    const empID = String(row[iEmpID] || '').trim();
-    const site = String(row[iSite] || '').trim();
-    const aonCode = String(row[iAonCode] || '').trim();
-    const level = String(row[iLevel] || '').trim();
-    const status = String(row[iStatus] || '').trim();
-    const salary = row[iSalary];
-    
-    // CRITICAL: Only include ACTIVE employees for internal stats
-    const isActive = activeStatusMap.get(empID);
-    if (!isActive) {
+    const actStatus = String(row[colAct] || '').toLowerCase();
+    if (actStatus !== 'active') {
       skippedInactive++;
       continue;
     }
+    const site = String(row[colSite] || '').trim();
+    const normSite = site === 'India' ? 'India' : (site === 'USA' ? 'USA' : (site === 'UK' ? 'UK' : site));
+    const famCode = String(row[colFam] || '').trim();
+    const execName = String(colMapN >= 0 ? (row[colMapN] || '') : (row[colFam] || '')).trim();
+    const ciq = String(row[colLvl] || '').trim();
+    const pay = toNumber_(row[colPay]);
     
-    // Skip if no mapping
-    if (!aonCode || !level) {
-      skippedNoMapping++;
+    if ((!famCode && !execName) || !ciq || isNaN(pay)) {
+      skippedMissingData++;
       continue;
     }
-    
-    // Skip if status is not Approved or Legacy (only use confirmed mappings)
-    if (status !== 'Approved' && status !== 'Legacy') {
-      skippedNoMapping++;
-      continue;
-    }
-    
-    // Skip if no salary
-    const pay = toNumber(salary);
-    if (isNaN(pay) || pay <= 0) {
-      skippedNoSalary++;
-      continue;
-    }
-    
-    // Normalize region (US → USA for consistency)
-    const normSite = site === 'US' ? 'USA' : (site === 'USA' ? 'USA' : (site === 'India' ? 'India' : (site === 'UK' ? 'UK' : site)));
     
     processedCount++;
     
     // Log first 3 employees for debugging
     if (processedCount <= 3) {
-      Logger.log(`Sample employee ${processedCount}: empID=${empID}, site=${normSite}, aonCode=${aonCode}, level=${level}, pay=${pay}, status=${status}, active=true`);
+      Logger.log(`Sample employee ${processedCount}: site=${normSite}, famCode=${famCode}, execName=${execName}, level=${ciq}, pay=${pay}`);
     }
     
-    // Create key: Region|AonCode|Level (e.g., "USA|EN.SODE|L5 IC")
-    const key = `${normSite}|${aonCode}|${level}`;
-    if (!buckets.has(key)) buckets.set(key, []);
-    buckets.get(key).push(pay);
-    
-    if (processedCount <= 3) {
-      Logger.log(`  → Created key: ${key}`);
+    // Primary index by Exec Description (normalized)
+    if (execName) {
+      const execKey = `${normSite}|${String(execName).toUpperCase()}|${ciq}`;
+      if (!buckets.has(execKey)) buckets.set(execKey, []);
+      buckets.get(execKey).push(pay);
+      
+      if (processedCount <= 3) {
+        Logger.log(`  → Created exec key: ${execKey}`);
+      }
     }
+    
+    const dot = famCode.lastIndexOf('.');
+    const base = dot >= 0 ? famCode.slice(0, dot) : famCode; // EN.SODE from EN.SODE.P5
+    const keys = new Set([base, remapAonCode_(base), reverseRemapAonCode_(base)]);
+    keys.forEach(b => {
+      if (!b) return;
+      const key = `${normSite}|${b}|${ciq}`;
+      if (!buckets.has(key)) buckets.set(key, []);
+      buckets.get(key).push(pay);
+      
+      if (processedCount <= 3) {
+        Logger.log(`  → Created aon key: ${key}`);
+      }
+    });
   }
   
-  Logger.log(`Processed ${processedCount} ACTIVE employees with approved mappings`);
-  Logger.log(`Skipped: ${skippedInactive} inactive, ${skippedNoMapping} without mapping, ${skippedNoSalary} without salary`);
+  Logger.log(`Processed ${processedCount} active employees, skipped ${skippedInactive} inactive, skipped ${skippedMissingData} with missing data`);
   buckets.forEach((arr, key) => {
     arr.sort((a,b)=>a-b);
     const n = arr.length; const min = arr[0], max = arr[n-1];
@@ -1890,7 +1540,7 @@ function rebuildFullListTabs_() {
   const fullHeader = ['Site','Region','Aon Code','Job Family (Exec Description)','Job Family (Raw)','CIQ Level','Aon Level','P10','P25','P40','P50','P62.5','P75','P90','Internal Min','Internal Median','Internal Max','Employees','', 'Key'];
   fl.clearContents(); fl.getRange(1,1,1,fullHeader.length).setValues([fullHeader]);
   if (rows.length) fl.getRange(2,1,rows.length,fullHeader.length).setValues(rows);
-  autoResizeColumnsIfNotCalculator(fl, 1, fullHeader.length);
+  fl.autoResizeColumns(1, fullHeader.length);
 
   const baseSh = ss.getSheetByName('Base Data');
   SpreadsheetApp.getActive().toast('Full List rebuilt successfully', 'Done', 5);
@@ -1972,15 +1622,9 @@ function buildFullListUsd_() {
     const fx = fxMap.get(region) || 1;
     const mul = (i) => { if (i >= 0) { const n = toNumber(row[i]); row[i] = isNaN(n) ? row[i] : n * fx; } };
     [cP10,cP25,cP40,cP50,cP625,cP75,cP90,cRangeStart,cRangeMid,cRangeEnd,cIMin,cIMed,cIMax].forEach(mul);
-    
-    // Round to nearest 100 ONLY for US (already rounded in local currency for UK/India)
-    // UK/India were rounded to 100/1000 in local currency, then FX converted → keep precise
-    // US is already in USD, so round to clean nearest 100
-    if (region === 'US' || region === 'USA') {
-      const r100 = (i) => { if (i >= 0) { const n = toNumber(row[i]); if (!isNaN(n)) row[i] = _round100_(n); } };
-      [cP10,cP25,cP40,cP50,cP625,cP75,cP90,cRangeStart,cRangeMid,cRangeEnd].forEach(r100);
-    }
-    
+    // Round market percentiles to nearest hundred after FX conversion
+    const r100 = (i) => { if (i >= 0) { const n = toNumber(row[i]); if (!isNaN(n)) row[i] = _round100_(n); } };
+    [cP10,cP25,cP40,cP50,cP625,cP75,cP90,cRangeStart,cRangeMid,cRangeEnd].forEach(r100);
     out.push(row);
   }
 
@@ -1988,7 +1632,7 @@ function buildFullListUsd_() {
   dst.setTabColor('#FF0000'); // Red color for automated sheets
   dst.clearContents();
   dst.getRange(1,1,out.length,head.length).setValues(out);
-  autoResizeColumnsIfNotCalculator(dst, 1, head.length);
+  dst.autoResizeColumns(1, head.length);
   SpreadsheetApp.getActive().toast('✅ Full List USD built\n⚡ Optimized (v4.6.0)', 'Complete', 5);
 }
 
@@ -2133,19 +1777,11 @@ function buildHelpSheet_() {
     ['═══════════════════════════════════════════════════════════════════════════════'],
     [''],
     ['Employees Mapped - Smart employee-to-Aon code mapping with approval workflow'],
-    ['   Columns (19 total): Employee ID, Name, Title, Dept, Site, Aon Code, Job Family, Level,'],
-    ['            Full Aon Code, Mapping Override, Confidence, Source, Status, Base Salary, Start Date,'],
-    ['            Recent Promotion, Level Anomaly, Title Anomaly, Market Data Missing'],
-    ['   ✏️ EDITABLE (yellow headers): Column F (Aon Code), Column I (Full Aon Code)'],
-    ['   🔵 Mapping Override: Flags when Full Aon Code ≠ F+H (e.g., using R3 instead of P3)'],
-    ['   📈 Recent Promotion: Flags promotions in last 90 days (verify mapping current)'],
-    ['   🟠 Level Anomaly: Bob level ≠ Aon code level token'],
-    ['   🟣 Title Anomaly: Mapping differs from others with same title'],
-    ['   🔴 Market Data Missing: No Aon data for this region+family+level combo'],
-    ['   Purpose: Map employees to job families for CR calculations & internal stats'],
-    ['   Updated: Auto-synced during Import Bob Data (uses Legacy + Title + Comp History)'],
-    ['   Workflow: Auto-populate → Review → Edit → Approve → Persist'],
-    ['   Sources: Legacy (100%), Title-Based (95%), Unmapped (0%)'],
+    ['   Columns: Employee ID, Name, Title, Dept, Site, Aon Code, Level, Confidence, Source, Status, Salary, Start Date'],
+    ['   Purpose: Map employees to job families and levels for CR calculations'],
+    ['   Updated: Auto-synced during Import Bob Data (uses Legacy + Title mappings)'],
+    ['   Workflow: Review → Approve → Auto-updates Legacy Mappings'],
+    ['   Sources: Legacy (100%), Title-Based (95%), Manual (50%)'],
     [''],
     ['Job family Descriptions - Maps Aon codes to friendly names'],
     ['   Columns: Aon Code, Job Family (Exec Description)'],
@@ -2174,62 +1810,20 @@ function buildHelpSheet_() {
     ['   ❌ Aon Code Remap - Handled in code'],
     [''],
     ['═══════════════════════════════════════════════════════════════════════════════'],
-    ['📋 REVIEW & QUALITY ASSURANCE'],
+    ['🛠️ TOOLS MENU'],
     ['═══════════════════════════════════════════════════════════════════════════════'],
-    [''],
-    ['👥 Review Employee Mappings'],
-    ['   • Opens Employees Mapped sheet for review'],
-    ['   • Yellow headers = Editable columns (F: Aon Code, I: Full Aon Code)'],
-    ['   • Watch for flags: Promotions, Overrides, Anomalies, Missing Data'],
-    ['   • Approve mappings with Status dropdown (Column M)'],
-    [''],
-    ['📊 Review Range Progression (v4.10)'],
-    ['   • Analyzes Full List for range violations'],
-    ['   • Detects: Ranges that decrease or stay flat as levels increase'],
-    ['   • Creates: "Range Progression Issues" sheet'],
-    ['   • Shows: Issue + Previous Level + Recommended Fix'],
-    ['   • Example: "L6 IC Range Mid (₹1M) ≤ L5 IC Range Mid (₹1.2M)"'],
-    [''],
-    ['✅ Apply Range Corrections (v4.10)'],
-    ['   • Applies approved corrections from Range Progression Issues'],
-    ['   • Updates: Full List + Full List USD'],
-    ['   • Only applies rows where Status = "Approved"'],
-    ['   • Marks applied corrections as "Applied" (green)'],
-    [''],
-    ['═══════════════════════════════════════════════════════════════════════════════'],
-    ['🔧 ADVANCED TOOLS'],
-    ['═══════════════════════════════════════════════════════════════════════════════'],
-    [''],
-    ['⏰ Setup Daily Auto-Import'],
-    ['   Schedules automatic Import Bob Data every morning (6-7 AM)'],
-    [''],
-    ['🤖 Import Bob Data (Headless)'],
-    ['   Silent import without UI prompts (for automation)'],
-    [''],
-    ['🔄 Rebuild Calculator Formulas'],
-    ['   Regenerates calculator sheet formulas (if corrupted)'],
     [''],
     ['💱 Apply Currency Format'],
     ['   Applies region-appropriate currency formatting ($, £, ₹)'],
     [''],
     ['🗑️ Clear All Caches'],
-    ['   Clears cached data (use if stale values appear)'],
+    ['   Clears cached data (use if calculator shows stale values)'],
     [''],
-    ['📂 Update Legacy Mappings'],
-    ['   Manually sync approved mappings to Legacy Mappings sheet'],
+    ['📖 Generate Help Sheet'],
+    ['   Creates/updates this help documentation'],
     [''],
-    ['═══════════════════════════════════════════════════════════════════════════════'],
-    ['❓ HELP MENU'],
-    ['═══════════════════════════════════════════════════════════════════════════════'],
-    [''],
-    ['📖 Generate Full Help Sheet'],
-    ['   Creates/updates this comprehensive help documentation'],
-    [''],
-    ['⚡ Quick Instructions'],
-    ['   Shows quick reference guide with common tasks'],
-    [''],
-    ['🆕 What\'s New (v4.14)'],
-    ['   Latest features and improvements'],
+    ['ℹ️ Quick Instructions'],
+    ['   Shows quick-start modal dialog'],
     [''],
     ['═══════════════════════════════════════════════════════════════════════════════'],
     ['📝 DATA FLOW'],
@@ -2270,58 +1864,31 @@ function buildHelpSheet_() {
     ['   → Run: 📊 Build Market Data'],
     [''],
     ['═══════════════════════════════════════════════════════════════════════════════'],
-    ['💡 TIPS & BEST PRACTICES'],
+    ['💡 TIPS'],
     ['═══════════════════════════════════════════════════════════════════════════════'],
     [''],
-    ['🎯 Data Quality:'],
-    ['• Review Range Progression after each Build Market Data'],
-    ['• Check Recent Promotions weekly (Column P in Employees Mapped)'],
-    ['• Watch Mapping Override column (Column J) - track rollup data usage'],
-    ['• Fix Market Data Missing issues (Column S) - add codes to Aon sheets'],
+    ['• Fallback logic: If a percentile is missing, system uses next higher percentile'],
+    ['  Example: P10 blank → uses P25 instead'],
     [''],
-    ['📊 .5 Levels (v4.9.1):'],
-    ['• L5.5 IC, L6.5 IC, L5.5 Mgr, L6.5 Mgr'],
-    ['• If both neighbors exist: averages them (e.g., (L5+L6)/2)'],
-    ['• If only lower exists: applies 1.2× multiplier (20% progression)'],
-    ['• If only upper exists: uses upper value'],
+    ['• Full List includes ALL combinations for X0/Y1 families, not just mapped employees'],
+    ['  This ensures you can use the calculator for any role, even if no employees currently exist'],
     [''],
-    ['💾 Persistence:'],
-    ['• Full Aon Code edits (Column I) preserved across imports'],
-    ['• Approved status preserved across imports'],
-    ['• Legacy Mappings auto-updated from approved entries'],
+    ['• Internal stats (Min/Median/Max/Count) only show where actual employees exist'],
     [''],
-    ['⚡ Performance:'],
-    ['• Caches expire after 10 minutes (fresh data)'],
-    ['• Smart conditional formatting (skips if unchanged)'],
-    ['• Pre-indexed employee lookups (80% faster)'],
-    ['• Batch operations minimize API calls'],
+    ['• Caches expire after 10 minutes to ensure fresh data'],
     [''],
-    ['🔍 Full List Coverage:'],
-    ['• Includes ALL X0/Y1 job family/level combinations'],
-    ['• Not limited to mapped employees'],
-    ['• Internal stats only show where employees exist'],
-    ['• Rollup data fallback (.R3, .R4, .R5, etc.)'],
+    ['• Half-levels (L5.5, L6.5) are calculated by averaging neighboring levels'],
     [''],
     ['═══════════════════════════════════════════════════════════════════════════════'],
     ['📞 NEED MORE HELP?'],
     ['═══════════════════════════════════════════════════════════════════════════════'],
     [''],
-    ['Menu: Help → Quick Instructions - Quick reference'],
-    ['Menu: Help → What\'s New (v4.14) - Latest features'],
-    ['Menu: Help → Generate Full Help Sheet - This comprehensive guide'],
-    [''],
-    ['Version: 4.14.0 - Mapping Override Detection + Auto-Justify'],
+    ['See: MENU_FUNCTIONS_GUIDE.md for detailed function descriptions'],
+    ['Version: 3.4.0 - Simplified Workflow'],
     ['Last Updated: 2025-11-27']
   ];
   sh.getRange(1,1,lines.length,1).setValues(lines.map(r => [r[0]]));
   sh.setColumnWidth(1, 800);
-  
-  SpreadsheetApp.getUi().alert(
-    '📖 Help Sheet Generated',
-    'The "About & Help" sheet has been created/updated with comprehensive documentation.\n\n' +
-    'Switch to that sheet to view the full guide.',
-    SpreadsheetApp.getUi().ButtonSet.OK
-  );
 }
 
 /********************************
@@ -2405,7 +1972,7 @@ function createAonPlaceholderSheets_() {
       sh.getRange(1, 1, 1, headers.length).setValues([headers]);
       sh.getRange(1, 1, 1, headers.length).setFontWeight('bold');
       sh.setFrozenRows(1);
-      autoResizeColumnsIfNotCalculator(sh, 1, headers.length);
+      sh.autoResizeColumns(1, headers.length);
       // Format numeric columns (percentiles)
       const rows = Math.max(1000, sh.getMaxRows() - 1);
       sh.getRange(2, 3, rows, headers.length - 2).setNumberFormat('#,##0');
@@ -2524,23 +2091,13 @@ function buildCalculatorUI_() {
   // Get X0 families only
   const categoryMap = _getCategoryMap_();
   const execMap = _getExecDescMap_();
-  
-  Logger.log(`Calculator X0: categoryMap size=${categoryMap.size}, execMap size=${execMap.size}`);
-  
   const x0Families = [];
   categoryMap.forEach((cat, code) => {
     if (cat === 'X0') {
       const desc = execMap.get(code);
-      if (desc) {
-        x0Families.push(desc);
-        if (x0Families.length <= 3) {
-          Logger.log(`  X0 family: ${code} → ${desc}`);
-        }
-      }
+      if (desc) x0Families.push(desc);
     }
   });
-  
-  Logger.log(`Calculator X0: Found ${x0Families.length} X0 families`);
   
   // Job Family dropdown (X0 families only)
   if (x0Families.length > 0) {
@@ -2550,10 +2107,6 @@ function buildCalculatorUI_() {
       .setAllowInvalid(false)
       .build();
     sh.getRange('B2').setDataValidation(rule);
-    Logger.log(`Calculator X0: Dropdown created with ${uniq.length} unique families`);
-  } else {
-    Logger.log('WARNING: No X0 families found! Dropdown not created. Check Lookup sheet.');
-    SpreadsheetApp.getActive().toast('⚠️ No X0 families found in Lookup sheet. Please run Fresh Build first.', 'Warning', 5);
   }
 
   // Labels (keeps existing styling; only writes text)
@@ -2614,11 +2167,11 @@ function buildCalculatorUI_() {
     formulasRangeEnd.push([`=IF($B$4="Local", XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$P:$P,""), XLOOKUP($B$2&$A${aRow}&$B$3,'Full List USD'!$Y:$Y,'Full List USD'!$P:$P,""))`]);
     
     // Internal stats (Column Q=Internal Min, R=Median, S=Max, T=Emp Count)
-    // Currency-aware: Switch between Full List (local) and Full List USD
-    formulasIntMin.push([`=IF($B$4="Local", XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$Q:$Q,""), XLOOKUP($B$2&$A${aRow}&$B$3,'Full List USD'!$Y:$Y,'Full List USD'!$Q:$Q,""))`]);
-    formulasIntMed.push([`=IF($B$4="Local", XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$R:$R,""), XLOOKUP($B$2&$A${aRow}&$B$3,'Full List USD'!$Y:$Y,'Full List USD'!$R:$R,""))`]);
-    formulasIntMax.push([`=IF($B$4="Local", XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$S:$S,""), XLOOKUP($B$2&$A${aRow}&$B$3,'Full List USD'!$Y:$Y,'Full List USD'!$S:$S,""))`]);
-    formulasIntCount.push([`=IF($B$4="Local", XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$T:$T,""), XLOOKUP($B$2&$A${aRow}&$B$3,'Full List USD'!$Y:$Y,'Full List USD'!$T:$T,""))`]);
+    // FIX: KEY is in Column Y, not U!
+    formulasIntMin.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$Q:$Q,"")`]);
+    formulasIntMed.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$R:$R,"")`]);
+    formulasIntMax.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$S:$S,"")`]);
+    formulasIntCount.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$T:$T,"")`]);
     
     // Compa Ratio columns - XLOOKUP from Full List (pre-calculated)
     // Column Y = Key, Column U = Avg CR, Column V = TT CR, Column W = New Hire CR, Column X = BT CR
@@ -2818,10 +2371,44 @@ function createMappingPlaceholderSheets_() {
   // This function kept for backward compatibility only
 }
 
-// ============================================================================
-// LEGACY SHEET ENHANCEMENT FUNCTIONS
-// (Enhanced formatting for deprecated mapping sheets - kept for compatibility)
-// ============================================================================
+/********************************
+ * DEPRECATED FUNCTIONS (kept for backward compatibility only)
+ * These functions managed the old "Job family Descriptions" sheet
+ * Now use Lookup sheet instead (auto-created with 71 codes)
+ ********************************/
+
+function listExecMappings_() {
+  // DEPRECATED: Use Lookup sheet instead
+  return [];
+}
+
+function upsertExecMapping_(code, desc) {
+  // DEPRECATED: Lookup sheet is auto-managed
+  SpreadsheetApp.getActive().toast('Use Lookup sheet instead (auto-managed)', 'Deprecated', 3);
+}
+
+function deleteExecMapping_(code) {
+  // DEPRECATED: Lookup sheet is auto-managed
+  SpreadsheetApp.getActive().toast('Use Lookup sheet instead (auto-managed)', 'Deprecated', 3);
+}
+
+function openExecMappingManager_() {
+  // DEPRECATED: HTML UI no longer needed
+  SpreadsheetApp.getUi().alert(
+    '⚠️ Deprecated Feature',
+    'This feature is deprecated.\n\n' +
+    'Aon Code mappings are now managed in the Lookup sheet,\n' +
+    'which is auto-created with all 71 job family codes.\n\n' +
+    'No manual management needed!',
+    SpreadsheetApp.getUi().ButtonSet.OK
+  );
+}
+
+function seedExecMappingsFromAon_() {
+  // DEPRECATED: Aon sheets now include Job Family column
+  // All mappings pre-loaded in Lookup sheet
+  SpreadsheetApp.getActive().toast('Not needed - Lookup sheet has all 71 codes', 'Deprecated', 3);
+}
 
 function enhanceMappingSheets_() {
   const ss = SpreadsheetApp.getActive();
@@ -2869,7 +2456,11 @@ function enhanceMappingSheets_() {
   SpreadsheetApp.getActive().toast('Mapping sheets enhanced', 'Done', 5);
 }
 
-// Removed: fillRegionFamilies_() - No longer needed (Aon data includes Job Family column)
+function fillRegionFamilies_() {
+  // DEPRECATED: Aon data now includes Job Family column
+  // No need to populate from Job Code since source data has it
+  SpreadsheetApp.getActive().toast('Not needed - Aon data includes Job Family column', 'Deprecated', 3);
+}
 
 function syncEmployeeLevelMappingFromBob_() {
   const ss = SpreadsheetApp.getActive();
@@ -2968,10 +2559,55 @@ function syncTitleMappingFromBob_() {
   SpreadsheetApp.getActive().toast(`Title Mapping synced: +${toAppend.length} titles`, 'Done', 5);
 }
 
-// Removed deprecated combined functions:
-// - syncAllBobMappings_() - Use Import Bob Data instead
-// - seedAllJobFamilyMappings_() - Use Fresh Build instead
-// - quickSetup_() - Replaced with 3-step workflow (Fresh Build → Import → Build Market Data)
+// ============================================================================
+// SIMPLIFIED COMBINED FUNCTIONS
+// ============================================================================
+
+/**
+ * Syncs ALL Bob-based mappings (Employee Level + Title Mapping)
+ * Combines syncEmployeeLevelMappingFromBob_ + syncTitleMappingFromBob_
+ */
+function syncAllBobMappings_() {
+  SpreadsheetApp.getActive().toast('Syncing all Bob mappings...', 'In Progress', 3);
+  syncEmployeeLevelMappingFromBob_();
+  syncTitleMappingFromBob_();
+  SpreadsheetApp.getActive().toast('All Bob mappings synced!', 'Complete', 5);
+}
+
+/**
+ * Seeds ALL job family mappings (Exec Mappings + Job Family Fill)
+ * Combines seedExecMappingsFromAon_ + fillRegionFamilies_
+ */
+function seedAllJobFamilyMappings_() {
+  // DEPRECATED: Use Fresh Build → Import Bob Data workflow instead
+  SpreadsheetApp.getActive().toast('Deprecated - Use Fresh Build instead', 'Deprecated', 3);
+}
+
+/**
+ * QUICK SETUP - Initializes entire system in correct order
+ * Run this ONCE after pasting Aon data into region tabs
+ * 
+ * Steps performed:
+ * 1. Create all necessary tabs (Aon, Mapping, Calculator)
+ * 2. Seed exec mappings from Aon data
+ * 3. Fill job families in region tabs
+ * 4. Build calculator UI with dropdowns
+ * 5. Generate help documentation
+ * 6. Enhance mapping sheets with formatting
+ */
+function quickSetup_() {
+  // DEPRECATED: Use the new 3-step workflow instead
+  const ui = SpreadsheetApp.getUi();
+  ui.alert(
+    '⚠️ Deprecated Feature',
+    'Quick Setup has been replaced with a streamlined 3-step workflow:\n\n' +
+    '1️⃣ Fresh Build - Creates all sheets and structure\n' +
+    '2️⃣ Import Bob Data - Loads employee data with smart mapping\n' +
+    '3️⃣ Build Market Data - Generates Full Lists and calculators\n\n' +
+    'Use Menu → Fresh Build to start!',
+    ui.ButtonSet.OK
+  );
+}
 
 /**
  * Validates prerequisites before building Full List
@@ -3216,13 +2852,13 @@ function _getLegacyMappingData_() {
     '20242': ['EN.SODE', 'EN.SODE.P3'],
     '20243': ['EN.SODE', 'EN.SODE.P5'],
     '20244': ['TE.DADA', 'TE.DADA.P3'],
-    '20245': ['HR.TATA', 'HR.TATA.P4'],
+    '20245': ['HR.TMTA', 'HR.TMTA.P4'],
     '20246': ['HR.GLGL', 'HR.GLGL.P5'],
     '20248': ['TE.DADA', 'TE.DADA.P3'],
     '20250': ['EN.PGPG', 'EN.PGPG.P5'],
     '20251': ['TE.DADS', 'TE.DADS.P3'],
     '20252': ['EN.SODE', 'EN.SODE.M5'],
-    '20253': ['HR.TATA', 'HR.TATA.P6'],
+    '20253': ['HR.TMTA', 'HR.TMTA.P6'],
     '20254': ['TE.DADS', 'TE.DADS.P4'],
     '20255': ['EN.UUUD', 'EN.UUUD.P4'],
     '20256': ['EN.SODE', 'EN.SODE.M5'],
@@ -3484,7 +3120,7 @@ function _getLegacyMappingData_() {
     '20546': ['EN.SODE', 'EN.SODE.P5'],
     '20547': ['EN.SODE', 'EN.SODE.P4'],
     '20548': ['EN.SODE', 'EN.SODE.P4'],
-    '20549': ['HR.TATA', 'HR.TATA.P5'],
+    '20549': ['HR.TMTA', 'HR.TMTA.P5'],
     '20550': ['EN.AIML', 'EN.AIML.P4'],
     '20551': ['EN.SODE', 'EN.SODE.M6'],
     '20552': ['EN.SODE', 'EN.SODE.P4'],
@@ -3660,7 +3296,7 @@ function _getLegacyMappingData_() {
     '195462': ['SA.CRCS', 'SA.CRCS.P6'],
     '196193': ['SA.CRCS', 'SA.CRCS.M5'],
     '196295': ['SP.SPMF', 'SP.SPMF.E1'],
-    '196621': ['HR.TATA', 'HR.TATA.M5'],
+    '196621': ['HR.TMTA', 'HR.TMTA.M5'],
     '196968': ['SA.FAF1', 'SA.FAF1.P5'],
     '197271': ['FI.CNCE', 'FI.CNCE.E1'],
     '197388': ['HR.ARIS', 'HR.ARIS.P5'],
@@ -3680,13 +3316,13 @@ function _getLegacyMappingData_() {
     '199357': ['SA.CRCS', 'SA.CRCS.P6'],
     '199358': ['SA.CRCS', 'SA.CRCS.P5'],
     '199360': ['SA.CRCS', 'SA.CRCS.P5'],
-    '199364': ['HR.TATA', 'HR.TATA.P4'],
+    '199364': ['HR.TMTA', 'HR.TMTA.P4'],
     '199369': ['SA.CRCS', 'SA.CRCS.P5'],
     '199370': ['SA.ASRS', 'SA.ASRS.M6'],
     '199376': ['SA.CRCS', 'SA.CRCS.M6'],
     '199380': ['FI.ACCO', 'FI.ACCO.M5'],
     '199383': ['SA.OPSO', 'SA.OPSO.P6'],
-    '199384': ['HR.TATA', 'HR.TATA.P5'],
+    '199384': ['HR.TMTA', 'HR.TMTA.P5'],
     '199386': ['SA.FAF1', 'SA.FAF1.P6'],
     '199387': ['MK.PIPM', 'MK.PIPM.P6'],
     '199389': ['SA.CRCS', 'SA.CRCS.P5'],
@@ -3749,18 +3385,18 @@ function _getLegacyMappingData_() {
     '199453': ['SA.CRCS', 'SA.CRCS.M5'],
     '199454': ['SA.CRCS', 'SA.CRCS.P5'],
     '199455': ['SA.CRCS', 'SA.CRCS.P5'],
-    '199456': ['HR.TATA', 'HR.TATA.P4'],
+    '199456': ['HR.TMTA', 'HR.TMTA.P4'],
     '199457': ['SA.CRCS', 'SA.CRCS.M5'],
     '199458': ['SA.CRCS', 'SA.CRCS.P5'],
-    '199459': ['HR.TATA', 'HR.TATA.M5'],
+    '199459': ['HR.TMTA', 'HR.TMTA.M5'],
     '199460': ['FI.GLFI', 'FI.GLFI.E5'],
-    '199461': ['HR.TATA', 'HR.TATA.P6'],
+    '199461': ['HR.TMTA', 'HR.TMTA.P6'],
     '199462': ['SA.FAF1', 'SA.FAF1.P6'],
     '199463': ['SP.BOBI', 'SP.BOBI.P5'],
     '199464': ['FI.ACGA', 'FI.ACGA.P5'],
     '199465': ['FI.ACGA', 'FI.ACGA.P4'],
     '199466': ['SA.CRCS', 'SA.CRCS.P6'],
-    '199467': ['HR.TATA', 'HR.TATA.P5'],
+    '199467': ['HR.TMTA', 'HR.TMTA.P5'],
     '199468': ['MK.GLHD', 'MK.GLHD.E5'],
     '199469': ['SA.FAF1', 'SA.FAF1.P6'],
     '199470': ['LG.GLMF', 'LG.GLMF.E1'],
@@ -3772,7 +3408,7 @@ function _getLegacyMappingData_() {
     '199476': ['TE.DADA', 'TE.DADA.P6'],
     '199477': ['SA.FAF1', 'SA.FAF1.P6'],
     '199478': ['EN.PMPD', 'EN.PMPD.M6'],
-    '199479': ['HR.TATA', 'HR.TATA.M6'],
+    '199479': ['HR.TMTA', 'HR.TMTA.M6'],
     '199480': ['SA.CRCS', 'SA.CRCS.P6'],
     '199481': ['SA.CRCE', 'SA.CRCE.E1'],
     '199482': ['SA.CRCS', 'SA.CRCS.M5'],
@@ -3825,8 +3461,7 @@ function _loadAllLegacyMappings_() {
       const ciqLevel = _parseLevelToken_(levelToken);
       
       if (aonCode && ciqLevel) {
-        // All mappings in persistent storage came from approved mappings, so mark as Approved
-        legacyMap.set(empID, {aonCode, ciqLevel, source: 'Legacy', status: 'Approved'});
+        legacyMap.set(empID, {aonCode, ciqLevel, source: 'Legacy'});
       }
     });
     return legacyMap;
@@ -3850,8 +3485,7 @@ function _loadAllLegacyMappings_() {
       const ciqLevel = _parseLevelToken_(levelToken);
       
       if (aonCode && ciqLevel) {
-        // All mappings in Legacy Mappings sheet came from approved mappings, so mark as Approved
-        legacyMap.set(empID, {aonCode, ciqLevel, source: 'Legacy', status: 'Approved'});
+        legacyMap.set(empID, {aonCode, ciqLevel, source: 'Legacy'});
       }
     });
   }
@@ -3936,7 +3570,7 @@ function updateLegacyMappingsFromApproved_() {
   }
   
   // Get all approved mappings from Employees Mapped
-  const empVals = empSh.getRange(2,1,empSh.getLastRow()-1,19).getValues();
+  const empVals = empSh.getRange(2,1,empSh.getLastRow()-1,15).getValues();
   const approvedMappings = new Map(); // empID → {jobFamily, fullMapping}
   
   let approvedCount = 0;
@@ -3946,7 +3580,7 @@ function updateLegacyMappingsFromApproved_() {
     const empID = String(row[0] || '').trim();
     const aonCode = String(row[5] || '').trim(); // Column F (index 5)
     const ciqLevel = String(row[7] || '').trim(); // Column H (index 7)
-    const status = String(row[12] || '').trim(); // Column M (index 12) - shifted from L
+    const status = String(row[10] || '').trim(); // Column K (index 10)
     
     // Debug logging for first few rows
     if (approvedCount + skippedCount < 3) {
@@ -3995,53 +3629,22 @@ function updateLegacyMappingsFromApproved_() {
   }
   
   // Prepare update/insert rows
-  const updates = []; // [rowNum, [empID, jobFamily, fullMapping], oldMapping]
+  const updates = []; // [rowNum, [empID, jobFamily, fullMapping]]
   const inserts = []; // [empID, jobFamily, fullMapping]
-  
-  // Get existing legacy data for comparison
-  const existingLegacyData = new Map(); // empID → {jobFamily, fullMapping}
-  if (legacySh.getLastRow() > 1) {
-    const legacyVals = legacySh.getRange(2,1,legacySh.getLastRow()-1,3).getValues();
-    legacyVals.forEach(row => {
-      const empID = String(row[0] || '').trim();
-      const jobFamily = String(row[1] || '').trim();
-      const fullMapping = String(row[2] || '').trim();
-      if (empID) {
-        existingLegacyData.set(empID, {jobFamily, fullMapping});
-      }
-    });
-  }
   
   approvedMappings.forEach((mapping, empID) => {
     if (existingMap.has(empID)) {
-      // Check if actually changed
-      const oldMapping = existingLegacyData.get(empID);
-      const changed = !oldMapping || 
-                     oldMapping.jobFamily !== mapping.jobFamily || 
-                     oldMapping.fullMapping !== mapping.fullMapping;
-      
-      if (changed) {
-        const rowNum = existingMap.get(empID);
-        updates.push([rowNum, [empID, mapping.jobFamily, mapping.fullMapping], oldMapping]);
-        
-        // Log first 3 changes
-        if (updates.length <= 3) {
-          Logger.log(`🔄 Update EmpID ${empID}: ${oldMapping?.fullMapping || 'none'} → ${mapping.fullMapping}`);
-        }
-      }
+      // Update existing row
+      const rowNum = existingMap.get(empID);
+      updates.push([rowNum, [empID, mapping.jobFamily, mapping.fullMapping]]);
     } else {
       // Insert new row
       inserts.push([empID, mapping.jobFamily, mapping.fullMapping]);
-      
-      // Log first 3 insertions
-      if (inserts.length <= 3) {
-        Logger.log(`➕ New EmpID ${empID}: ${mapping.fullMapping}`);
-      }
     }
   });
   
   // Apply updates
-  updates.forEach(([rowNum, data, oldMapping]) => {
+  updates.forEach(([rowNum, data]) => {
     legacySh.getRange(rowNum, 1, 1, 3).setValues([data]);
   });
   
@@ -4054,25 +3657,14 @@ function updateLegacyMappingsFromApproved_() {
   const allLegacyData = legacySh.getRange(2, 1, legacySh.getLastRow() - 1, 3).getValues();
   _saveLegacyMappingsToStorage_(allLegacyData);
   
-  // More descriptive message
-  let msg = `✅ Legacy Mappings Synced!\n\n`;
+  const msg = `✅ Updated Legacy Mappings:\n\n` +
+    `📝 ${updates.length} updated\n` +
+    `➕ ${inserts.length} new\n` +
+    `💾 ${allLegacyData.length} total in storage\n\n` +
+    `Saved to persistent storage ✓`;
+  SpreadsheetApp.getActive().toast(msg, 'Legacy Mappings Synced', 8);
   
-  if (updates.length > 0) {
-    msg += `📝 ${updates.length} mapping${updates.length === 1 ? '' : 's'} updated\n`;
-  }
-  if (inserts.length > 0) {
-    msg += `➕ ${inserts.length} new mapping${inserts.length === 1 ? '' : 's'} added\n`;
-  }
-  if (updates.length === 0 && inserts.length === 0) {
-    msg += `ℹ️ No changes (all approved mappings already in storage)\n`;
-  }
-  
-  msg += `💾 ${allLegacyData.length} total in persistent storage\n\n`;
-  msg += `✓ Changes saved and will persist across Fresh Build`;
-  
-  SpreadsheetApp.getActive().toast(msg, 'Legacy Mappings', 10);
-  
-  Logger.log(`Successfully synced ${approvedMappings.size} approved mappings: ${updates.length} updated, ${inserts.length} new`);
+  Logger.log(`Successfully synced ${approvedMappings.size} approved mappings to persistent storage`);
 }
 
 /**
@@ -4095,23 +3687,17 @@ function _ciqLevelToToken_(ciqLevel) {
       return 'E1'; // L7 IC = E1
     }
   } else {
-    // Manager levels: M4-M6 for standard, E1/E3/E5/E6 for executive
-    // From Lookup table:
-    // E1 = L7 Mgr (VP)
-    // E3 = L8 Mgr (SVP)
-    // E5 = L9 Mgr (C-Suite)
-    // E6 = L10+ Mgr (CEO)
-    // Note: Must match reverse mapping in _parseLevelToken_
-    if (levelNum >= 10) {
-      return 'E6'; // L10+ Mgr = E6 (CEO)
-    } else if (levelNum === 9) {
-      return 'E5'; // L9 Mgr = E5 (C-Suite)
-    } else if (levelNum === 8) {
-      return 'E3'; // L8 Mgr = E3 (SVP)
+    // Manager levels
+    if (levelNum <= 6.5) {
+      return `M${Math.floor(levelNum)}`;
     } else if (levelNum === 7) {
-      return 'E1'; // L7 Mgr = E1 (VP)
-    } else if (levelNum >= 4 && levelNum <= 6.5) {
-      return `M${Math.floor(levelNum)}`; // L4-L6 Mgr = M4-M6
+      return 'E1';
+    } else if (levelNum === 8) {
+      return 'E3';
+    } else if (levelNum === 9) {
+      return 'E5';
+    } else if (levelNum === 10) {
+      return 'E6';
     }
   }
   
@@ -4123,8 +3709,6 @@ function _ciqLevelToToken_(ciqLevel) {
  */
 function _parseLevelToken_(token) {
   if (!token) return '';
-  
-  // Parse standard tokens (P5, M6, E1, E3, E5, E6, etc.)
   const match = token.match(/^([PME])(\d+)$/);
   if (!match) return '';
   
@@ -4134,77 +3718,19 @@ function _parseLevelToken_(token) {
   if (letter === 'P') return `L${num} IC`;
   if (letter === 'M') return `L${num} Mgr`;
   if (letter === 'E') {
-    // Executive mapping (from Lookup table):
-    // E1 = L7 Mgr (VP)
-    // E3 = L8 Mgr (SVP)
-    // E5 = L9 Mgr (C-Suite)
-    // E6 = L10+ Mgr (CEO)
-    if (num === 1) return 'L7 Mgr';
-    if (num === 3) return 'L8 Mgr';
-    if (num === 5) return 'L9 Mgr';
-    if (num === 6) return 'L10 Mgr';  // CEO level (if exists)
+    // Executive mapping
+    if (num === 1) return 'L9 Mgr';
+    if (num === 2) return 'L8 Mgr';
+    if (num === 3) return 'L7 Mgr';
+    if (num === 4) return 'L6.5 Mgr';
+    if (num === 5) return 'L6 Mgr';
+    if (num === 6) return 'L5.5 Mgr';
   }
   return '';
 }
 
 /**
- * Rebuilds Lookup sheet with latest mappings (user-facing function)
- * Use this after updating category mappings in the code
- */
-function rebuildLookupSheet() {
-  const ui = SpreadsheetApp.getUi();
-  const response = ui.alert(
-    '🔄 Rebuild Lookup Sheet',
-    'This will recreate the Lookup sheet with the latest category mappings.\n\n' +
-    'Current mappings: 67 Aon codes (X0/Y1 categories)\n\n' +
-    'Use this after:\n' +
-    '• Code updates to category mappings\n' +
-    '• Need to refresh FX rates\n' +
-    '• Lookup sheet is corrupted\n\n' +
-    'The existing Lookup sheet will be replaced.\n\n' +
-    'Continue?',
-    ui.ButtonSet.YES_NO
-  );
-  
-  if (response !== ui.Button.YES) {
-    SpreadsheetApp.getActive().toast('Rebuild cancelled', 'Cancelled', 3);
-    return;
-  }
-  
-  try {
-    SpreadsheetApp.getActive().toast('🔄 Rebuilding Lookup sheet...', 'Rebuild Lookup', 3);
-    
-    // Delete existing Lookup sheet
-    const ss = SpreadsheetApp.getActive();
-    const existingLookup = ss.getSheetByName('Lookup');
-    if (existingLookup) {
-      ss.deleteSheet(existingLookup);
-    }
-    
-    // Create fresh Lookup sheet
-    createLookupSheet_();
-    
-    // Clear caches
-    clearAllCaches_();
-    
-    ui.alert(
-      '✅ Lookup Sheet Rebuilt!',
-      'The Lookup sheet has been recreated with the latest mappings.\n\n' +
-      '📊 UPDATED:\n' +
-      '• 67 Aon Code mappings (X0/Y1)\n' +
-      '• CIQ Level → Aon Level tokens\n' +
-      '• FX rates (US/UK/India)\n\n' +
-      '💡 Changes will be used in next Build Market Data.',
-      ui.ButtonSet.OK
-    );
-    
-  } catch (e) {
-    ui.alert('❌ Error', 'Rebuild failed: ' + e.message, ui.ButtonSet.OK);
-  }
-}
-
-/**
- * Creates comprehensive Lookup sheet with all mappings (internal function)
+ * Creates comprehensive Lookup sheet with all mappings
  * Single source of truth for: Level mapping, Category assignment, FX rates
  */
 function createLookupSheet_() {
@@ -4265,7 +3791,7 @@ function createLookupSheet_() {
   currentRow++;
   
   const categoryData = [
-    // X0 CATEGORIES (Engineering & Product) - Updated 2025-11-28
+    // X0 CATEGORIES (Engineering & Product)
     ['EN.AIML', 'Engineering - AI/ML', 'X0'],
     ['EN.PGPG', 'Engineering - Product Management/ TPM', 'X0'],
     ['EN.SODE', 'Engineering - Software Development', 'X0'],
@@ -4274,13 +3800,16 @@ function createLookupSheet_() {
     ['EN.GLCC', 'Engineering - CTO', 'X0'],
     ['EN.PGHC', 'Engineering - CPO (Product Leadership)', 'X0'],
     ['EN.SDCD', 'Engineering - System Design & Cloud Architecture', 'X0'],
-    ['EN.DVDE', 'Engineering - Architect', 'X0'],
     ['TE.DADS', 'Data - Data Science', 'X0'],
     ['TE.DABD', 'Data - Big Data Engineering', 'X0'],
+    ['EN.DVEX', 'Engineering - Architect / Distinguished Engineer', 'X0'],
+    ['EN.DVDE', 'Engineering - Architect', 'X0'],
     
-    // Y1 CATEGORIES (Everyone Else) - Updated 2025-11-28
+    // Y1 CATEGORIES (Everyone Else)
     ['LE.GLEC', 'CEO', 'Y1'],
-    ['CB.ADCE', 'Corporate - Executive Assistant', 'Y1'],
+    ['CB.0000', 'Corporate - Executive Assistant', 'Y1'],
+    ['CB.ADEA', 'Corporate - Executive Assistant', 'Y1'],
+    ['CB.ADCE', 'Leadership - Executive Assistant', 'Y1'],
     ['SP.SPMF', 'Corporate - Strategic Planning (Sr. Leadership)', 'Y1'],
     ['SP.BOBI', 'Corporate : Business Intelligence', 'Y1'],
     ['CS.CSAS', 'Customer Support - Account Services', 'Y1'],
@@ -4305,7 +3834,9 @@ function createLookupSheet_() {
     ['HR.GLMF', 'HR - Leadership/CHRO', 'Y1'],
     ['HR.SSHR', 'HR - Specialist/Shared Services', 'Y1'],
     ['HR.GL00', 'HR - Strategy (Multi Focus)', 'Y1'],
+    ['HR.TMTA', 'HR - Talent Acquisition', 'Y1'],
     ['HR.TATA', 'HR - Talent Acquisition', 'Y1'],
+    ['CB.ADAA', 'HR - Workplace Services', 'Y1'],
     ['CB.ASAS', 'HR - Workplace Services', 'Y1'],
     ['LG.GLMF', 'Legal - General Counsel', 'Y1'],
     ['SP.BDBD', 'Marketing - Business Development', 'Y1'],
@@ -4358,23 +3889,13 @@ function buildCalculatorUIForY1_() {
   // Get Y1 families only
   const categoryMap = _getCategoryMap_();
   const execMap = _getExecDescMap_();
-  
-  Logger.log(`Calculator Y1: categoryMap size=${categoryMap.size}, execMap size=${execMap.size}`);
-  
   const y1Families = [];
   categoryMap.forEach((cat, code) => {
     if (cat === 'Y1') {
       const desc = execMap.get(code);
-      if (desc) {
-        y1Families.push(desc);
-        if (y1Families.length <= 3) {
-          Logger.log(`  Y1 family: ${code} → ${desc}`);
-        }
-      }
+      if (desc) y1Families.push(desc);
     }
   });
-  
-  Logger.log(`Calculator Y1: Found ${y1Families.length} Y1 families`);
   
   // Job Family dropdown (Y1 families only)
   if (y1Families.length > 0) {
@@ -4384,10 +3905,6 @@ function buildCalculatorUIForY1_() {
       .setAllowInvalid(false)
       .build();
     sh.getRange('B2').setDataValidation(rule);
-    Logger.log(`Calculator Y1: Dropdown created with ${uniq.length} unique families`);
-  } else {
-    Logger.log('WARNING: No Y1 families found! Dropdown not created. Check Lookup sheet.');
-    SpreadsheetApp.getActive().toast('⚠️ No Y1 families found in Lookup sheet. Please run Fresh Build first.', 'Warning', 5);
   }
   
   // Labels
@@ -4446,11 +3963,11 @@ function buildCalculatorUIForY1_() {
     formulasRangeEnd.push([`=IF($B$4="Local", XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$P:$P,""), XLOOKUP($B$2&$A${aRow}&$B$3,'Full List USD'!$Y:$Y,'Full List USD'!$P:$P,""))`]);
     
     // Internal stats (Column Q=Internal Min, R=Median, S=Max, T=Emp Count)
-    // Currency-aware: Switch between Full List (local) and Full List USD
-    formulasIntMin.push([`=IF($B$4="Local", XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$Q:$Q,""), XLOOKUP($B$2&$A${aRow}&$B$3,'Full List USD'!$Y:$Y,'Full List USD'!$Q:$Q,""))`]);
-    formulasIntMed.push([`=IF($B$4="Local", XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$R:$R,""), XLOOKUP($B$2&$A${aRow}&$B$3,'Full List USD'!$Y:$Y,'Full List USD'!$R:$R,""))`]);
-    formulasIntMax.push([`=IF($B$4="Local", XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$S:$S,""), XLOOKUP($B$2&$A${aRow}&$B$3,'Full List USD'!$Y:$Y,'Full List USD'!$S:$S,""))`]);
-    formulasIntCount.push([`=IF($B$4="Local", XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$T:$T,""), XLOOKUP($B$2&$A${aRow}&$B$3,'Full List USD'!$Y:$Y,'Full List USD'!$T:$T,""))`]);
+    // FIX: KEY is in Column Y, not U!
+    formulasIntMin.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$Q:$Q,"")`]);
+    formulasIntMed.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$R:$R,"")`]);
+    formulasIntMax.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$S:$S,"")`]);
+    formulasIntCount.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$T:$T,"")`]);
     
     // CR columns - XLOOKUP from Full List (pre-calculated)
     formulasAvgCR.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$U:$U,"")`]);
@@ -4475,7 +3992,7 @@ function buildCalculatorUIForY1_() {
   // Format
   sh.getRange(8,2,levels.length,3).setNumberFormat('$#,##0');
   sh.getRange(8,6,levels.length,3).setNumberFormat('$#,##0');
-  sh.getRange(8,9,levels.length,1).setNumberFormat('0;-0;;@'); // Hide zeros - show blank instead
+  sh.getRange(8,9,levels.length,1).setNumberFormat('0');
 }
 
 /**
@@ -4545,75 +4062,31 @@ function syncEmployeesMappedSheet_() {
   
   // Create headers if needed
   if (empSh.getLastRow() === 0) {
-    empSh.getRange(1,1,1,19).setValues([[ 
+    empSh.getRange(1,1,1,15).setValues([[ 
       'Employee ID', 'Employee Name', 'Job Title', 'Department', 'Site',
-      'Aon Code', 'Job Family (Exec Description)', 'Level', 'Full Aon Code', 'Mapping Override', 'Confidence', 'Source', 'Status', 'Base Salary', 'Start Date',
-      'Recent Promotion', 'Level Anomaly', 'Title Anomaly', 'Market Data Missing'
+      'Aon Code', 'Job Family (Exec Description)', 'Level', 'Confidence', 'Source', 'Status', 'Base Salary', 'Start Date',
+      'Level Anomaly', 'Title Anomaly'
     ]]);
     empSh.setFrozenRows(1);
-    empSh.getRange(1,1,1,19).setFontWeight('bold');
-    
-    // Highlight editable columns: F (Aon Code) and I (Full Aon Code)
-    empSh.getRange(1, 6).setBackground('#FFD966').setNote('✏️ EDITABLE: Enter base Aon Code (e.g., EN.SODE)');  // Column F
-    empSh.getRange(1, 9).setBackground('#FFD966').setNote('✏️ EDITABLE: Enter full Aon Code with level token (e.g., EN.SODE.P3)');  // Column I
+    empSh.getRange(1,1,1,15).setFontWeight('bold');
   }
   
-  // Get existing mappings (preserve approved ones AND user edits to Full Aon Code)
+  // Get existing mappings (preserve approved ones)
   const existing = new Map();
   if (empSh.getLastRow() > 1) {
-    const empVals = empSh.getRange(2,1,empSh.getLastRow()-1,19).getValues();
+    const empVals = empSh.getRange(2,1,empSh.getLastRow()-1,15).getValues();
     empVals.forEach(row => {
       if (row[0]) {
         existing.set(String(row[0]).trim(), {
           aonCode: row[5] || '',
           jobFamilyDesc: row[6] || '',
           level: row[7] || '',
-          fullAonCode: row[8] || '',   // Column I - preserve user edits
-          confidence: row[10] || '',   // Column K (shifted from J)
-          source: row[11] || '',       // Column L (shifted from K)
-          status: row[12] || ''        // Column M (shifted from L)
+          confidence: row[8] || '',
+          source: row[9] || '',
+          status: row[10] || ''
         });
       }
     });
-  }
-  
-  // Load Comp History for recent promotions (last 90 days)
-  SpreadsheetApp.getActive().toast('📈 Checking promotions...', 'Step 1/3', 2);
-  const compHistSh = ss.getSheetByName('Comp History');
-  const promotionMap = new Map(); // empID → {date, reason}
-  const promotionCutoffDate = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000); // 90 days ago
-  
-  if (compHistSh && compHistSh.getLastRow() > 1) {
-    const compHistVals = compHistSh.getDataRange().getValues();
-    const compHistHead = compHistVals[0].map(h => String(h||''));
-    const iCompEmpID = compHistHead.findIndex(h => /Emp.*ID|Employee.*ID/i.test(h));
-    const iHistReason = compHistHead.findIndex(h => /History.*reason|Reason/i.test(h));
-    const iEffDate = compHistHead.findIndex(h => /Effective.*date|Eff.*date/i.test(h));
-    
-    if (iCompEmpID >= 0 && iHistReason >= 0 && iEffDate >= 0) {
-      for (let i = 1; i < compHistVals.length; i++) {
-        const row = compHistVals[i];
-        const empID = String(row[iCompEmpID] || '').trim();
-        const reason = String(row[iHistReason] || '').toLowerCase();
-        const effDate = row[iEffDate];
-        
-        // Check if reason indicates promotion
-        if (reason && (reason.includes('promotion') || reason.includes('promoted') || reason.includes('promo'))) {
-          const effDateObj = effDate instanceof Date ? effDate : new Date(effDate);
-          if (effDateObj && !isNaN(effDateObj.getTime()) && effDateObj >= promotionCutoffDate) {
-            // Store most recent promotion for this employee
-            if (!promotionMap.has(empID) || effDateObj > promotionMap.get(empID).date) {
-              promotionMap.set(empID, {date: effDateObj, reason: row[iHistReason]});
-            }
-          }
-        }
-      }
-      Logger.log(`✅ Recent Promotion: Found ${promotionMap.size} employees with promotions in last 90 days (cutoff: ${promotionCutoffDate.toISOString().split('T')[0]})`);
-    } else {
-      Logger.log(`⚠️ Recent Promotion: Could not find required columns in Comp History (EmpID=${iCompEmpID}, Reason=${iHistReason}, EffDate=${iEffDate})`);
-    }
-  } else {
-    Logger.log(`⚠️ Recent Promotion: Comp History sheet not found or empty`);
   }
   
   // Get Base Data
@@ -4632,28 +4105,18 @@ function syncEmployeesMappedSheet_() {
   const iActive = baseHead.findIndex(h => /Active.*Inactive|Status/i.test(h));
   const iTerm = baseHead.findIndex(h => /Termination.*date|Term.*date|End.*date|Leave.*date/i.test(h));
   
-  // Load Aon data for market data availability check
-  SpreadsheetApp.getActive().toast('📊 Loading market data...', 'Step 1/3', 2);
-  const aonCache = _preloadAonData_();
-  
   if (iEmpID < 0) {
-    const ui = SpreadsheetApp.getUi();
-    ui.alert('❌ Error', 'Employee ID column not found in Base Data', ui.ButtonSet.OK);
+    SpreadsheetApp.getActive().toast('Employee ID column not found in Base Data', 'Error', 5);
     return;
   }
   
   // Progress indicator
-  SpreadsheetApp.getActive().toast('👥 Processing employees...', 'Step 2/3', 2);
+  SpreadsheetApp.getActive().toast('Loading employee data...', 'Employee Mapping', 3);
   
   // Cutoff date: Jan 1, 2024 for filtering exits
   const exitCutoffDate = new Date('2024-01-01');
   
-  // ═══════════════════════════════════════════════════════════════════════════════
-  // PERFORMANCE OPTIMIZATION #1: Pre-build employee-to-title index
-  // ═══════════════════════════════════════════════════════════════════════════════
-  // Before: O(n²) nested loop - 600 employees × 600 lookups = 360,000 iterations
-  // After: O(n) single pass + O(1) Map lookups
-  // Result: ~99% faster title anomaly detection
+  // OPTIMIZATION: Build employee ID → title index ONCE (eliminates O(n²) nested loop)
   const empToTitle = new Map(); // empID → title
   for (let i = 1; i < baseVals.length; i++) {
     const empID = String(baseVals[i][iEmpID] || '').trim();
@@ -4663,12 +4126,7 @@ function syncEmployeesMappedSheet_() {
     }
   }
   
-  // ═══════════════════════════════════════════════════════════════════════════════
-  // PERFORMANCE OPTIMIZATION #2: Batch load all legacy mappings
-  // ═══════════════════════════════════════════════════════════════════════════════
-  // Before: Individual lookups for each employee (600+ sheet reads)
-  // After: Single batch load with Map indexing
-  // Result: ~90% faster mapping resolution
+  // OPTIMIZATION: Load ALL legacy mappings ONCE (eliminates 600+ individual lookups)
   SpreadsheetApp.getActive().toast('Loading legacy mappings...', 'Employee Mapping', 3);
   const allLegacyMappings = _loadAllLegacyMappings_();
   
@@ -4744,17 +4202,14 @@ function syncEmployeesMappedSheet_() {
     const salary = iSalary >= 0 ? row[iSalary] : '';
     const startDate = iStart >= 0 ? row[iStart] : '';
     
-    let aonCode = '', confidence = '', source = '', status = 'Needs Review';
+    let aonCode = '', ciqLevel = '', confidence = '', source = '', status = 'Needs Review';
     let jobFamilyDesc = '';
-    
-    // ALWAYS use Job Level from Bob Base Data (don't override with mapping level)
-    let ciqLevel = jobLevelFromBob || '';
     
     // Priority 1: Check if existing mapping is Approved
     const prev = existing.get(empID);
     if (prev && prev.status === 'Approved') {
       aonCode = prev.aonCode;
-      // Note: Level comes from Bob, not from mapping
+      ciqLevel = prev.level;
       confidence = prev.confidence;
       source = prev.source;
       status = 'Approved';
@@ -4765,28 +4220,26 @@ function syncEmployeesMappedSheet_() {
       const legacy = allLegacyMappings.get(empID);
       if (legacy) {
         aonCode = legacy.aonCode;
-        // Note: Level comes from Bob, not from legacy mapping
+        ciqLevel = legacy.ciqLevel;
         confidence = '100%';
         source = 'Legacy';
-        // If legacy mapping has status, preserve it (handles approved mappings from persistent storage)
-        // Otherwise default to "Legacy" (not "Needs Review" since these came from approved historical data)
-        status = legacy.status || 'Legacy';
+        status = 'Needs Review'; // Even legacy needs review
         legacyCount++;
       }
       // Priority 3: Title-based suggestion
       else if (title && titleMap.has(title)) {
         const mapping = titleMap.get(title);
         aonCode = mapping.aonCode;
-        // Note: Level comes from Bob, not from title mapping
+        ciqLevel = mapping.level;
         confidence = '95%';
         source = 'Title-Based';
         status = 'Needs Review';
         titleBasedCount++;
       }
       // Priority 4: Preserve existing if present (even if not approved)
-      else if (prev && prev.aonCode) {
+      else if (prev && prev.aonCode && prev.level) {
         aonCode = prev.aonCode;
-        // Note: Level comes from Bob, not from previous mapping
+        ciqLevel = prev.level;
         confidence = prev.confidence || '50%';
         source = prev.source || 'Manual';
         status = prev.status || 'Needs Review';
@@ -4794,7 +4247,8 @@ function syncEmployeesMappedSheet_() {
       }
       // No mapping found
       else {
-        // Level already set from Bob Base Data above
+        // Use Job Level from Bob Base Data even if unmapped
+        ciqLevel = jobLevelFromBob || '';
         confidence = '0%';
         source = 'Unmapped';
         status = 'Needs Review';
@@ -4802,39 +4256,30 @@ function syncEmployeesMappedSheet_() {
       }
     }
     
+    // If still no level, use Job Level from Bob Base Data as fallback
+    if (!ciqLevel && jobLevelFromBob) {
+      ciqLevel = jobLevelFromBob;
+    }
+    
     // Get Job Family Description
     if (aonCode) {
       jobFamilyDesc = execDescMap.get(aonCode) || '';
-    }
-    
-    // Build Full Aon Code FIRST (needed for anomaly detection)
-    // Priority: Preserve user edits, otherwise auto-generate
-    let fullAonCode = '';
-    if (prev && prev.fullAonCode) {
-      // User has edited this before - preserve their edit
-      fullAonCode = prev.fullAonCode;
-    } else if (aonCode && ciqLevel) {
-      // Auto-generate from base Aon Code + Level token
-      const levelToken = _ciqLevelToToken_(ciqLevel); // e.g., "L3 IC" → "P3"
-      fullAonCode = levelToken ? `${aonCode}.${levelToken}` : aonCode;
     }
     
     // Anomaly Detection
     let levelAnomaly = '';
     let titleAnomaly = '';
     
-    // Level Anomaly: Check if Bob's Job Level matches the level token in Full Aon Code
-    // Example: If Bob says L6 IC (expects P6), but Full Aon Code is EN.SODE.P2, flag it!
-    if (fullAonCode && ciqLevel) {
-      // Expected Aon level token from Bob's Job Level (e.g., "L6 IC" → "P6")
+    // Level Anomaly: Check if CIQ level matches expected Aon level
+    if (aonCode && ciqLevel) {
+      // Expected Aon level token from CIQ level (e.g., "L5 IC" → "P5")
       const expectedToken = _ciqLevelToToken_(ciqLevel);
-      // Actual token from Full Aon Code (e.g., "EN.SODE.P2" → "P2")
-      const parts = fullAonCode.split('.');
+      // Actual token from Aon Code (e.g., "EN.SODE.P5" → "P5")
+      const parts = aonCode.split('.');
       const actualToken = parts.length >= 3 ? parts[2] : '';
       
       if (expectedToken && actualToken && expectedToken !== actualToken) {
-        // Show both Bob's level and actual token for clarity
-        levelAnomaly = `Bob: ${ciqLevel} (${expectedToken}) ≠ Aon: ${actualToken}`;
+        levelAnomaly = `Expected ${expectedToken}, got ${actualToken}`;
       }
     }
     
@@ -4849,100 +4294,24 @@ function syncEmployeesMappedSheet_() {
       }
     }
     
-    // Market Data Missing: Check if Aon data exists for this region+family+level
-    let marketDataMissing = '';
-    
-    // Skip .5 levels - they are always calculated (never in Aon sheets)
-    // L5.5 IC, L6.5 Mgr, etc. are generated by averaging/multiplying neighboring levels
-    if (ciqLevel && ciqLevel.includes('.5')) {
-      marketDataMissing = ''; // Always clear for .5 levels (expected to be synthetic)
-    } else if (aonCode && ciqLevel && site) {
-      // Normalize site to region (US/USA, India, UK)
-      const region = site === 'USA' ? 'US' : site;
-      
-      // Extract base family code (EN.SODE.P5 → EN.SODE)
-      const familyParts = aonCode.split('.');
-      const baseFamily = familyParts.length >= 2 ? `${familyParts[0]}.${familyParts[1]}` : aonCode;
-      
-      // Check direct lookup first
-      const directKey = `${region}|${baseFamily}|${ciqLevel}`;
-      let hasMarketData = aonCache.has(directKey);
-      
-      // If no direct data, check rollup
-      if (!hasMarketData) {
-        const levelMatch = ciqLevel.match(/L([\d.]+)/);
-        if (levelMatch) {
-          const levelNum = Math.floor(parseFloat(levelMatch[1]));
-          const rollupKey = `${region}|${baseFamily}.R${levelNum}|${ciqLevel}`;
-          hasMarketData = aonCache.has(rollupKey);
-        }
-      }
-      
-      // Flag if no market data found
-      if (!hasMarketData) {
-        marketDataMissing = `No ${region} data`;
-      }
-    }
-    
-    // Check for Mapping Override (Full Aon Code doesn't match ideal F+H combination)
-    // Note: fullAonCode already built above (before anomaly detection)
-    let mappingOverride = '';
-    if (aonCode && ciqLevel && fullAonCode) {
-      const levelToken = _ciqLevelToToken_(ciqLevel);
-      const idealFullCode = levelToken ? `${aonCode}.${levelToken}` : aonCode;
-      if (fullAonCode !== idealFullCode) {
-        // User has intentionally overridden - flag it for tracking
-        // Extract just the token part to show what changed
-        const actualToken = fullAonCode.includes('.') ? fullAonCode.split('.').pop() : '';
-        const expectedToken = idealFullCode.includes('.') ? idealFullCode.split('.').pop() : '';
-        if (actualToken && expectedToken && actualToken !== expectedToken) {
-          mappingOverride = `Using ${actualToken} instead of ${expectedToken}`;
-        } else {
-          mappingOverride = `Override: ${fullAonCode} (expected ${idealFullCode})`;
-        }
-      }
-    }
-    
-    // Check for recent promotion (last 90 days)
-    let recentPromotion = '';
-    if (promotionMap.has(empID)) {
-      const promo = promotionMap.get(empID);
-      const daysAgo = Math.floor((Date.now() - promo.date.getTime()) / (24 * 60 * 60 * 1000));
-      const monthsAgo = Math.floor(daysAgo / 30);
-      const timeAgo = monthsAgo > 0 ? `${monthsAgo} month${monthsAgo > 1 ? 's' : ''} ago` : `${daysAgo} day${daysAgo > 1 ? 's' : ''} ago`;
-      recentPromotion = `Promoted ${timeAgo} - verify mapping`;
-    }
-    
-    // Debug: Log first 3 employees to verify anomaly detection
-    if (rows.length < 3) {
-      Logger.log(`Employee ${rows.length + 1}: EmpID=${empID}, Level=${ciqLevel}, FullAonCode=${fullAonCode}, LevelAnomaly="${levelAnomaly}", RecentPromo="${recentPromotion}", TitleAnomaly="${titleAnomaly}"`);
-    }
-    
-    rows.push([empID, name, title, dept, site, aonCode, jobFamilyDesc, ciqLevel, fullAonCode, mappingOverride, confidence, source, status, salary, startDate, recentPromotion, levelAnomaly, titleAnomaly, marketDataMissing]);
+    rows.push([empID, name, title, dept, site, aonCode, jobFamilyDesc, ciqLevel, confidence, source, status, salary, startDate, levelAnomaly, titleAnomaly]);
   }
   
   // Write to sheet
-  SpreadsheetApp.getActive().toast('💾 Writing to sheet...', 'Step 3/3', 2);
-  empSh.getRange(2,1,Math.max(1, empSh.getMaxRows()-1),19).clearContent();
+  SpreadsheetApp.getActive().toast('Writing data (3/3)...', 'Employee Mapping', 3);
+  empSh.getRange(2,1,Math.max(1, empSh.getMaxRows()-1),15).clearContent();
   if (rows.length) {
-    empSh.getRange(2,1,rows.length,19).setValues(rows);
+    empSh.getRange(2,1,rows.length,15).setValues(rows);
     
-    // Add data validation for Status column (M - shifted from L)
+    // Add data validation for Status column (K)
     const statusRule = SpreadsheetApp.newDataValidation()
       .requireValueInList(['Needs Review', 'Approved', 'Rejected'], true)
       .setAllowInvalid(false)
       .build();
-    empSh.getRange(2,13,rows.length,1).setDataValidation(statusRule);
+    empSh.getRange(2,11,rows.length,1).setDataValidation(statusRule);
   }
   
-  // ═══════════════════════════════════════════════════════════════════════════════
-  // PERFORMANCE OPTIMIZATION #5: Smart conditional formatting skip
-  // ═══════════════════════════════════════════════════════════════════════════════
-  // Conditional formatting is EXPENSIVE (~2-3 seconds per application)
-  // Only update if:
-  //   - No existing rules (first run)
-  //   - Significant row count change (>10 rows added/removed)
-  // Result: Saves 2-3 seconds on every import with stable employee count
+  // OPTIMIZATION: Smart conditional formatting skip (only update if rules missing or significant row count change)
   const existingRules = empSh.getConditionalFormatRules();
   const prevRowCount = empSh.getLastRow() - 1;
   const rowCountChanged = Math.abs(prevRowCount - rows.length) > 10;
@@ -4954,64 +4323,40 @@ function syncEmployeesMappedSheet_() {
   
   // Green: Approved
   rules.push(SpreadsheetApp.newConditionalFormatRule()
-    .whenFormulaSatisfied('=$M2="Approved"')  // Column M (shifted from L)
+    .whenFormulaSatisfied('=$K2="Approved"')
     .setBackground('#D5F5E3')
-    .setRanges([empSh.getRange('A2:S')])  // Updated to S (19 columns)
+    .setRanges([empSh.getRange('A2:O')])
     .build());
   
   // Yellow: Needs Review
   rules.push(SpreadsheetApp.newConditionalFormatRule()
-    .whenFormulaSatisfied('=$M2="Needs Review"')  // Column M (shifted from L)
+    .whenFormulaSatisfied('=$K2="Needs Review"')
     .setBackground('#FFF9C4')
-    .setRanges([empSh.getRange('A2:S')])  // Updated to S
+    .setRanges([empSh.getRange('A2:O')])
     .build());
   
   // Red: Rejected or missing mapping
   rules.push(SpreadsheetApp.newConditionalFormatRule()
-    .whenFormulaSatisfied('=OR($M2="Rejected",AND(LEN($A2)>0,OR(LEN($F2)=0,LEN($H2)=0)))')  // Column M
+    .whenFormulaSatisfied('=OR($K2="Rejected",AND(LEN($A2)>0,OR(LEN($F2)=0,LEN($H2)=0)))')
     .setBackground('#FDE7E9')
     .setFontColor('#D32F2F')
-    .setRanges([empSh.getRange('A2:S')])  // Updated to S
+    .setRanges([empSh.getRange('A2:O')])
     .build());
   
-  // Blue: Mapping Override (Column J) - NEW
+  // Orange: Level Anomaly
   rules.push(SpreadsheetApp.newConditionalFormatRule()
-    .whenFormulaSatisfied('=LEN($J2)>0')
-    .setBackground('#E3F2FD')
-    .setFontColor('#1565C0')
-    .setRanges([empSh.getRange('J2:J')])
-    .build());
-  
-  // Orange: Recent Promotion (Column P - shifted from O)
-  rules.push(SpreadsheetApp.newConditionalFormatRule()
-    .whenFormulaSatisfied('=LEN($P2)>0')
-    .setBackground('#FFF4E6')
-    .setFontColor('#E65100')
-    .setRanges([empSh.getRange('P2:P')])
-    .build());
-  
-  // Orange: Level Anomaly (Column Q - shifted from P)
-  rules.push(SpreadsheetApp.newConditionalFormatRule()
-    .whenFormulaSatisfied('=LEN($Q2)>0')
+    .whenFormulaSatisfied('=LEN($N2)>0')
     .setBackground('#FFE5CC')
     .setFontColor('#E65100')
-    .setRanges([empSh.getRange('Q2:Q')])
+    .setRanges([empSh.getRange('N2:N')])
     .build());
   
-  // Purple: Title Anomaly (Column R - shifted from Q)
+  // Purple: Title Anomaly
   rules.push(SpreadsheetApp.newConditionalFormatRule()
-    .whenFormulaSatisfied('=LEN($R2)>0')
+    .whenFormulaSatisfied('=LEN($O2)>0')
     .setBackground('#E1D5F7')
     .setFontColor('#6A1B9A')
-    .setRanges([empSh.getRange('R2:R')])
-    .build());
-  
-  // Red: Market Data Missing (Column S - shifted from R)
-  rules.push(SpreadsheetApp.newConditionalFormatRule()
-    .whenFormulaSatisfied('=LEN($S2)>0')
-    .setBackground('#FFCDD2')
-    .setFontColor('#B71C1C')
-    .setRanges([empSh.getRange('S2:S')])
+    .setRanges([empSh.getRange('O2:O')])
     .build());
   
     empSh.setConditionalFormatRules(rules);
@@ -5020,201 +4365,17 @@ function syncEmployeesMappedSheet_() {
     Logger.log(`Skipped conditional formatting (${existingRules.length} rules already present)`);
   }
   
-  autoResizeColumnsIfNotCalculator(empSh, 1, 19);
-  
-  // Count issues across all columns
-  const mappingOverrideCount = rows.filter(row => row[9] && row[9].length > 0).length; // Column J (index 9)
-  const recentPromotionCount = rows.filter(row => row[15] && row[15].length > 0).length; // Column P (index 15)
-  const levelAnomalyCount = rows.filter(row => row[16] && row[16].length > 0).length; // Column Q (index 16)
-  const titleAnomalyCount = rows.filter(row => row[17] && row[17].length > 0).length; // Column R (index 17)
-  const marketDataMissingCount = rows.filter(row => row[18] && row[18].length > 0).length; // Column S (index 18)
-  
-  Logger.log(`📊 Summary Counts: MappingOverride=${mappingOverrideCount}, RecentPromotion=${recentPromotionCount}, LevelAnomaly=${levelAnomalyCount}, TitleAnomaly=${titleAnomalyCount}, MarketDataMissing=${marketDataMissingCount}`);
+  empSh.autoResizeColumns(1,15);
   
   const totalProcessed = rows.length + filteredCount;
-  let msg = `✅ Synced ${rows.length} employees (${filteredCount} old exits filtered):\n\n` +
+  const msg = `✅ Synced ${rows.length} employees (${filteredCount} old exits filtered):\n` +
     `✓ Approved: ${approvedCount}\n` +
     `📋 Legacy: ${legacyCount}\n` +
     `🔍 Title-Based: ${titleBasedCount}\n` +
-    `⚠️ Needs Review: ${needsReviewCount}\n`;
-  
-  if (mappingOverrideCount > 0) {
-    msg += `\n🔵 Mapping Overrides: ${mappingOverrideCount} employees (using rollup/custom codes)\n`;
-  }
-  
-  if (recentPromotionCount > 0) {
-    msg += `\n📈 Recent Promotions: ${recentPromotionCount} employees (verify mappings)\n`;
-  }
-  
-  if (levelAnomalyCount > 0) {
-    msg += `\n🟠 Level Anomalies: ${levelAnomalyCount} employees (Bob level ≠ Aon token)\n`;
-  }
-  
-  if (titleAnomalyCount > 0) {
-    msg += `\n🟣 Title Anomalies: ${titleAnomalyCount} employees (mapping differs from peers)\n`;
-  }
-  
-  if (marketDataMissingCount > 0) {
-    msg += `\n🔴 Missing Market Data: ${marketDataMissingCount} employees\n`;
-  }
-  
-  msg += `\nFilter: Active + exits after Jan 1, 2024`;
-  
-  // Show summary as ALERT (center screen) instead of toast (bottom right, often cut off)
-  const ui = SpreadsheetApp.getUi();
-  ui.alert('✅ Employee Mapping Complete', msg, ui.ButtonSet.OK);
-}
-
-/**
- * Refreshes Market Data Availability column (Column S) in Employees Mapped
- * Use this after adding new Aon market data without re-running full Import Bob Data
- * 
- * QUICK REFRESH - Only updates Column S based on current Aon data
- * Preserves all other employee mapping data
- */
-function refreshMarketDataAvailability() {
-  const ui = SpreadsheetApp.getUi();
-  const ss = SpreadsheetApp.getActive();
-  
-  // Confirm action
-  const response = ui.alert(
-    '🔄 Refresh Market Data Availability',
-    'This will re-scan Aon region tabs and update the "Market Data Missing" column (Column S) in Employees Mapped.\n\n' +
-    'Use this after:\n' +
-    '• Adding new Aon market data\n' +
-    '• Updating existing Aon data\n\n' +
-    'All other employee data will be preserved.\n\n' +
-    'Continue?',
-    ui.ButtonSet.YES_NO
-  );
-  
-  if (response !== ui.Button.YES) {
-    SpreadsheetApp.getActive().toast('Refresh cancelled', 'Cancelled', 3);
-    return;
-  }
-  
-  try {
-    SpreadsheetApp.getActive().toast('📊 Loading Aon market data...', 'Refresh Market Data', 3);
-    
-    // Get Employees Mapped sheet
-    const empSh = ss.getSheetByName(SHEET_NAMES.EMPLOYEES_MAPPED);
-    if (!empSh || empSh.getLastRow() <= 1) {
-      ui.alert('❌ Error', 'Employees Mapped sheet not found or empty.\n\nPlease run "Import Bob Data" first.', ui.ButtonSet.OK);
-      return;
-    }
-    
-    // Load fresh Aon data
-    const aonCache = _preloadAonData_();
-    
-    // Read existing employee data
-    SpreadsheetApp.getActive().toast('👥 Scanning employees...', 'Refresh Market Data', 3);
-    const empVals = empSh.getRange(2, 1, empSh.getLastRow() - 1, 19).getValues();
-    
-    if (empVals.length === 0) {
-      ui.alert('⚠️ Warning', 'No employees found in Employees Mapped sheet.', ui.ButtonSet.OK);
-      return;
-    }
-    
-    // Column indices (0-based for array access)
-    const COL_SITE = 4;        // Column E
-    const COL_AON_CODE = 5;    // Column F
-    const COL_LEVEL = 7;       // Column H
-    const COL_MARKET_DATA = 18; // Column S
-    
-    let updatedCount = 0;
-    let clearedCount = 0;
-    let unchangedCount = 0;
-    
-    // Update Column S for each employee
-    for (let i = 0; i < empVals.length; i++) {
-      const row = empVals[i];
-      const site = String(row[COL_SITE] || '').trim();
-      const aonCode = String(row[COL_AON_CODE] || '').trim();
-      const ciqLevel = String(row[COL_LEVEL] || '').trim();
-      
-      let marketDataMissing = '';
-      
-      // Skip .5 levels - they are always calculated (never in Aon sheets)
-      // L5.5 IC, L6.5 Mgr, etc. are generated by averaging/multiplying neighboring levels
-      if (ciqLevel && ciqLevel.includes('.5')) {
-        marketDataMissing = ''; // Always clear for .5 levels (expected to be synthetic)
-      } else if (aonCode && ciqLevel && site) {
-        // Normalize site to region (US/USA, India, UK)
-        const region = site === 'USA' ? 'US' : site;
-        
-        // Extract base family code (EN.SODE.P5 → EN.SODE)
-        const familyParts = aonCode.split('.');
-        const baseFamily = familyParts.length >= 2 ? `${familyParts[0]}.${familyParts[1]}` : aonCode;
-        
-        // Check direct lookup first
-        const directKey = `${region}|${baseFamily}|${ciqLevel}`;
-        let hasMarketData = aonCache.has(directKey);
-        
-        // If no direct data, check rollup
-        if (!hasMarketData) {
-          const levelMatch = ciqLevel.match(/L([\d.]+)/);
-          if (levelMatch) {
-            const levelNum = Math.floor(parseFloat(levelMatch[1]));
-            const rollupKey = `${region}|${baseFamily}.R${levelNum}|${ciqLevel}`;
-            hasMarketData = aonCache.has(rollupKey);
-          }
-        }
-        
-        // Flag if no market data found
-        if (!hasMarketData) {
-          marketDataMissing = `No ${region} data`;
-        }
-      }
-      
-      // Track changes
-      const oldValue = String(row[COL_MARKET_DATA] || '');
-      if (oldValue !== marketDataMissing) {
-        row[COL_MARKET_DATA] = marketDataMissing;
-        if (marketDataMissing === '') {
-          clearedCount++;
-        } else {
-          updatedCount++;
-        }
-      } else {
-        unchangedCount++;
-      }
-    }
-    
-    // Write updated data back to sheet
-    SpreadsheetApp.getActive().toast('💾 Updating sheet...', 'Refresh Market Data', 2);
-    empSh.getRange(2, 1, empVals.length, 19).setValues(empVals);
-    
-    // Clear cache so next build uses fresh data
-    clearAllCaches_();
-    
-    // Success message
-    const totalChanged = updatedCount + clearedCount;
-    let msg = `✅ Market Data Availability Refreshed!\n\n` +
-              `📊 RESULTS:\n` +
-              `• Total employees scanned: ${empVals.length}\n`;
-    
-    if (totalChanged > 0) {
-      msg += `• Updated: ${totalChanged} employees\n`;
-      if (clearedCount > 0) {
-        msg += `  ✓ Data now available: ${clearedCount}\n`;
-      }
-      if (updatedCount > 0) {
-        msg += `  ⚠️ Still missing data: ${updatedCount}\n`;
-      }
-    } else {
-      msg += `• No changes (all data already current)\n`;
-    }
-    
-    msg += `\n💡 TIP: If employees still show "No market data":\n` +
-           `1. Verify Aon data is pasted in region tabs\n` +
-           `2. Check Aon Code matches (e.g., EN.SODE)\n` +
-           `3. Try "Build Market Data" to refresh Full Lists`;
-    
-    ui.alert('✅ Refresh Complete', msg, ui.ButtonSet.OK);
-    
-  } catch (e) {
-    ui.alert('❌ Error', 'Refresh failed: ' + e.message + '\n\nStack: ' + e.stack, ui.ButtonSet.OK);
-  }
+    `⚠️ Needs Review: ${needsReviewCount}\n\n` +
+    `Filter: Active + exits after Jan 1, 2024\n` +
+    `⚡ Optimized: 80% faster (v4.5.0)`;
+  SpreadsheetApp.getActive().toast(msg, 'Employees Mapped ⚡', 10);
 }
 
 /**
@@ -5661,15 +4822,18 @@ function _preloadAonData_() {
       const jobCode = String(row[colJobCode] || '').trim();
       if (!jobCode) continue;
       
-      // Extract family code (e.g., "EN.SODE.P5" → "EN.SODE", "CS.RSTS.R4" → "CS.RSTS")
+      // Extract family code (e.g., "EN.SODE.P5" → "EN.SODE")
       const parts = jobCode.split('.');
       if (parts.length < 2) continue;
       const family = `${parts[0]}.${parts[1]}`;
       
-      // Extract level token (e.g., "EN.SODE.P5" → "P5", "CS.RSTS.R4" → "R4")
+      // Extract level (e.g., "EN.SODE.P5" → "P5", then lookup to "L5 IC")
       const levelToken = parts.length >= 3 ? parts[2] : '';
+      const ciqLevel = _parseLevelToken_(levelToken);
+      if (!ciqLevel) continue;
       
-      const percentileData = {
+      const key = `${region}|${family}|${ciqLevel}`;
+      aonCache.set(key, {
         p10: colP10 >= 0 && row[colP10] ? row[colP10] : '',
         p25: colP25 >= 0 && row[colP25] ? row[colP25] : '',
         p40: colP40 >= 0 && row[colP40] ? row[colP40] : '',
@@ -5677,37 +4841,11 @@ function _preloadAonData_() {
         p625: colP625 >= 0 && row[colP625] ? row[colP625] : '',
         p75: colP75 >= 0 && row[colP75] ? row[colP75] : '',
         p90: colP90 >= 0 && row[colP90] ? row[colP90] : ''
-      };
+      });
       
-      // Handle rollup codes (e.g., R4 = rollup for L4 IC and L4 Mgr)
-      if (/^R(\d+)$/i.test(levelToken)) {
-        const levelNum = levelToken.match(/^R(\d+)$/i)[1];
-        const rollupFamily = `${family}.${levelToken}`; // Store full code: CS.RSTS.R4
-        
-        // Store under BOTH IC and Mgr keys for this level
-        const icLevel = `L${levelNum} IC`;
-        const mgrLevel = `L${levelNum} Mgr`;
-        
-        aonCache.set(`${region}|${rollupFamily}|${icLevel}`, percentileData);
-        aonCache.set(`${region}|${rollupFamily}|${mgrLevel}`, percentileData);
-        
-        rowCount++;
-        if (rowCount <= 3) {
-          Logger.log(`Rollup: ${jobCode} → ${rollupFamily}, ${icLevel}+${mgrLevel}, P25=${row[colP25]}, P625=${row[colP625]}`);
-        }
-      }
-      // Handle regular codes (P5, M4, etc.)
-      else {
-        const ciqLevel = _parseLevelToken_(levelToken);
-        if (!ciqLevel) continue;
-        
-        const key = `${region}|${family}|${ciqLevel}`;
-        aonCache.set(key, percentileData);
-        
-        rowCount++;
-        if (rowCount <= 3) {
-          Logger.log(`Sample: ${jobCode} → ${family}, ${ciqLevel}, P25=${row[colP25]}, P625=${row[colP625]}`);
-        }
+      rowCount++;
+      if (rowCount <= 3) {
+        Logger.log(`Sample: ${jobCode} → ${family}, ${ciqLevel}, P25=${row[colP25]}, P625=${row[colP625]}`);
       }
     }
     
@@ -5727,31 +4865,10 @@ function _preIndexEmployeesForCR_() {
   const ss = SpreadsheetApp.getActive();
   const empSh = ss.getSheetByName(SHEET_NAMES.EMPLOYEES_MAPPED);
   const perfSh = ss.getSheetByName(SHEET_NAMES.PERF_RATINGS);
-  const baseSh = ss.getSheetByName(SHEET_NAMES.BASE_DATA);
   
   const empIndex = new Map();
   
   if (!empSh || empSh.getLastRow() <= 1) return empIndex;
-  
-  // Build ACTIVE STATUS index from Base Data (same as _buildInternalIndex_)
-  const activeStatusMap = new Map();
-  if (baseSh && baseSh.getLastRow() > 1) {
-    const baseVals = baseSh.getDataRange().getValues();
-    const baseHead = baseVals[0].map(h => String(h || ''));
-    const iBaseEmpID = baseHead.findIndex(h => /Emp.*ID|Employee.*ID/i.test(h));
-    const iBaseActive = baseHead.findIndex(h => /Active.*Inactive/i.test(h));
-    
-    if (iBaseEmpID >= 0 && iBaseActive >= 0) {
-      for (let r = 1; r < baseVals.length; r++) {
-        const empID = String(baseVals[r][iBaseEmpID] || '').trim();
-        const activeStatus = String(baseVals[r][iBaseActive] || '').toLowerCase();
-        if (empID) {
-          activeStatusMap.set(empID, activeStatus === 'active');
-        }
-      }
-      Logger.log(`CR Index: Built active status map with ${activeStatusMap.size} employees`);
-    }
-  }
   
   // Build performance map ONCE
   const perfMap = new Map();
@@ -5771,42 +4888,25 @@ function _preIndexEmployeesForCR_() {
   }
   
   // Read employees ONCE
-  const empVals = empSh.getRange(2,1,empSh.getLastRow()-1,19).getValues();
+  const empVals = empSh.getRange(2,1,empSh.getLastRow()-1,15).getValues();
   const execMap = _getExecDescMap_();
   const cutoffDate = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000);
-  
-  let newHireDebugCount = 0;
-  let skippedInactive = 0;
   
   empVals.forEach(row => {
     const empID = String(row[0] || '').trim();
     const aonCode = String(row[5] || '').trim();
     const empLevel = String(row[7] || '').trim(); // Column H
     const empSite = String(row[4] || '').trim();
-    const status = String(row[12] || '').trim(); // Column M = Status
-    const salary = row[13]; // Column N = Base Salary
-    const startDate = row[14]; // Column O = Start Date
+    const status = String(row[10] || '').trim(); // Column K
+    const salary = row[11]; // Column L
+    const startDate = row[12]; // Column M
     
-    // CRITICAL: Only include ACTIVE employees (same filter as _buildInternalIndex_)
-    const isActive = activeStatusMap.get(empID);
-    if (!isActive) {
-      skippedInactive++;
-      return;
-    }
+    if (status !== 'Approved' || !salary || isNaN(salary) || salary <= 0) return;
     
-    // Only include Approved or Legacy status for CR calculations
-    if ((status !== 'Approved' && status !== 'Legacy') || !salary || isNaN(salary) || salary <= 0) return;
+    const empFamily = execMap.get(aonCode) || '';
+    if (!empFamily) return;
     
-    // Skip if no Aon Code
-    if (!aonCode) return;
-    
-    // Normalize region (US → USA for consistency with internal stats)
-    const normSite = empSite === 'US' ? 'USA' : (empSite === 'USA' ? 'USA' : (empSite === 'India' ? 'India' : (empSite === 'UK' ? 'UK' : empSite)));
-    
-    // CRITICAL: Use aonCode directly (not description) to match internal stats key format
-    // Internal stats uses: ${normSite}|${aonCode}|${level}
-    // CR must use same format for Full List lookup to work!
-    const key = `${normSite}|${aonCode}|${empLevel}`;
+    const key = `${empSite}|${empFamily}|${empLevel}`;
     
     if (!empIndex.has(key)) {
       empIndex.set(key, {
@@ -5824,70 +4924,31 @@ function _preIndexEmployeesForCR_() {
     if (rating === 'HH') group.ttSalaries.push(salary);
     if (rating === 'ML' || rating === 'NI') group.btSalaries.push(salary);
     
-    // New Hire CR: Check if hired in last 365 days
     if (startDate) {
       const startDateObj = startDate instanceof Date ? startDate : new Date(startDate);
-      
-      // Validate date is valid
-      if (startDateObj && !isNaN(startDateObj.getTime())) {
-        if (startDateObj >= cutoffDate) {
-          group.nhSalaries.push(salary);
-          
-          // Debug: Log first 5 new hires
-          if (newHireDebugCount < 5) {
-            const daysAgo = Math.floor((Date.now() - startDateObj.getTime()) / (1000 * 60 * 60 * 24));
-            Logger.log(`New Hire: EmpID=${empID}, StartDate=${startDateObj.toISOString().split('T')[0]}, DaysAgo=${daysAgo}, Salary=${salary}, Key=${key}`);
-            newHireDebugCount++;
-          }
-        }
+      if (startDateObj >= cutoffDate) {
+        group.nhSalaries.push(salary);
       }
     }
   });
   
-  // Count total new hires across all groups
-  let totalNewHires = 0;
-  empIndex.forEach(group => {
-    totalNewHires += group.nhSalaries.length;
-  });
-  
-  Logger.log(`Pre-indexed ${empIndex.size} employee groups for CR calculations`);
-  Logger.log(`Skipped ${skippedInactive} inactive employees (same filter as internal stats)`);
-  Logger.log(`New Hire CR: Found ${totalNewHires} total employees hired in last 365 days (cutoff: ${cutoffDate.toISOString().split('T')[0]})`);
-  
-  // Log first 5 keys for debugging (showing normalization)
-  let keyCount = 0;
-  empIndex.forEach((group, key) => {
-    if (keyCount < 5) {
-      const parts = key.split('|');
-      Logger.log(`CR Index sample ${keyCount + 1}: "${key}" (region=${parts[0]}) has ${group.salaries.length} employees`);
-      keyCount++;
-    }
-  });
-  
+  Logger.log(`Pre-indexed ${empIndex.size} employee groups`);
   return empIndex;
 }
 
 function rebuildFullListAllCombinations_() {
   const ss = SpreadsheetApp.getActive();
   
-  // ═══════════════════════════════════════════════════════════════════════════════
-  // PERFORMANCE OPTIMIZATION #3: Pre-load all Aon market data
-  // ═══════════════════════════════════════════════════════════════════════════════
-  // Total combinations: 3 regions × 71 families × 16 levels = 3,408 lookups
-  // Each lookup would scan 3 Aon sheets (~1,000 rows each = 3,000 rows per lookup)
-  // Before: 3,408 × 3,000 = 10,224,000 row scans
-  // After: Single batch read of 3,000 rows total
-  // Result: ~95% faster market data building
+  // Progress indicator
   SpreadsheetApp.getActive().toast('Loading Aon data...', 'Build Market Data', 3);
+  
+  // OPTIMIZATION: Pre-load ALL Aon data ONCE (instead of 10,080+ reads)
   const aonCache = _preloadAonData_();
   
-  // ═══════════════════════════════════════════════════════════════════════════════
-  // PERFORMANCE OPTIMIZATION #4: Pre-index employees for CR calculations
-  // ═══════════════════════════════════════════════════════════════════════════════
-  // Before: For each combo, filter 600 employees (3,408 × 600 = 2,044,800 checks)
-  // After: Single pass grouping + O(1) Map lookups
-  // Result: ~98% faster CR calculations
+  // Progress indicator
   SpreadsheetApp.getActive().toast('Indexing employees...', 'Build Market Data', 3);
+  
+  // OPTIMIZATION: Pre-index ALL employees ONCE (instead of 1,440 full scans)
   const empIndex = _preIndexEmployeesForCR_();
   
   // Progress indicator
@@ -5926,77 +4987,9 @@ function rebuildFullListAllCombinations_() {
       
       for (const ciqLevel of levels) {
         totalCombinations++;
-        
         // OPTIMIZED: Get market percentiles from pre-loaded cache (instant lookup!)
         const aonKey = `${region}|${aonCode}|${ciqLevel}`;
-        let percentiles = aonCache.get(aonKey) || {};
-        
-        // FALLBACK 1: Try rollup data if direct data is missing
-        // Rollup codes: .R3 (for P3/M3), .R4 (for P4/M4), etc.
-        if (!percentiles.p25 && !percentiles.p625) {
-          const levelMatch = ciqLevel.match(/L([\d.]+)/);
-          if (levelMatch) {
-            const levelNum = Math.floor(parseFloat(levelMatch[1])); // L5 IC → 5, L5.5 IC → 5
-            const rollupKey = `${region}|${aonCode}.R${levelNum}|${ciqLevel}`;
-            const rollupData = aonCache.get(rollupKey);
-            
-            if (rollupData && (rollupData.p25 || rollupData.p625)) {
-              percentiles = rollupData;
-              
-              // Log first 5 rollup usages for debugging
-              if (totalCombinations <= 50 && (rollupData.p25 || rollupData.p625)) {
-                Logger.log(`📊 Rollup used: ${aonCode}.R${levelNum} for ${ciqLevel} → P25=${rollupData.p25}, P625=${rollupData.p625}`);
-              }
-            }
-          }
-        }
-        
-        // FALLBACK 2: Handle .5 levels: If data still not found, average neighboring levels
-        if (ciqLevel.includes('.5') && (!percentiles.p25 && !percentiles.p625)) {
-          const isIC = ciqLevel.includes('IC');
-          const levelNum = parseFloat(ciqLevel.match(/L([\d.]+)/)[1]);
-          const lowerLevel = `L${Math.floor(levelNum)} ${isIC ? 'IC' : 'Mgr'}`;
-          const upperLevel = `L${Math.ceil(levelNum)} ${isIC ? 'IC' : 'Mgr'}`;
-          
-          const lowerKey = `${region}|${aonCode}|${lowerLevel}`;
-          const upperKey = `${region}|${aonCode}|${upperLevel}`;
-          const lowerPct = aonCache.get(lowerKey) || {};
-          const upperPct = aonCache.get(upperKey) || {};
-          
-          // Average each percentile
-          // If both exist: average them
-          // If only preceding exists: apply 1.2x multiplier for progression
-          // If only succeeding exists: use it as-is
-          const avg = (a, b) => {
-            const numA = toNumber(a);
-            const numB = toNumber(b);
-            if (numA && numB) return (numA + numB) / 2;  // Both: average
-            if (numA) return numA * 1.2;  // Only preceding: 20% uplift
-            if (numB) return numB;  // Only succeeding: use as-is
-            return '';
-          };
-          
-          percentiles = {
-            p10: avg(lowerPct.p10, upperPct.p10),
-            p25: avg(lowerPct.p25, upperPct.p25),
-            p40: avg(lowerPct.p40, upperPct.p40),
-            p50: avg(lowerPct.p50, upperPct.p50),
-            p625: avg(lowerPct.p625, upperPct.p625),
-            p75: avg(lowerPct.p75, upperPct.p75),
-            p90: avg(lowerPct.p90, upperPct.p90)
-          };
-          
-          // Log first 20 .5 level calculations for debugging
-          if (totalCombinations <= 20 && ciqLevel.includes('.5')) {
-            const hasUpper = toNumber(upperPct.p25) || toNumber(upperPct.p625);
-            if (hasUpper) {
-              Logger.log(`Averaged ${ciqLevel}: ${lowerLevel} + ${upperLevel} → P25=${percentiles.p25}, P625=${percentiles.p625}`);
-            } else {
-              Logger.log(`🔼 Applied 1.2x to ${ciqLevel}: ${lowerLevel} × 1.2 → P25=${percentiles.p25}, P625=${percentiles.p625}`);
-            }
-          }
-        }
-        
+        const percentiles = aonCache.get(aonKey) || {};
         const p10 = percentiles.p10 || '';
         const p25 = percentiles.p25 || '';
         const p40 = percentiles.p40 || '';
@@ -6011,7 +5004,7 @@ function rebuildFullListAllCombinations_() {
         const intKey = `${intRegion}|${aonCode}|${ciqLevel}`;
         const intStats = internalIndex.get(intKey) || { min: '', med: '', max: '', n: 0 };
         
-        // Log first 5 lookups for debugging
+        // Log first 5 lookups for debugging (Internal Stats)
         if (totalCombinations <= 5) {
           const found = internalIndex.has(intKey);
           Logger.log(`Lookup ${totalCombinations}: key="${intKey}" found=${found} stats=${JSON.stringify(intStats)}`);
@@ -6024,51 +5017,39 @@ function rebuildFullListAllCombinations_() {
         // Key format: JobFamily+Level+Region (for calculator XLOOKUP)
         const key = `${execDesc}${ciqLevel}${region}`;
         
-        // Helper: Round currency based on region
-        const roundCurrency = (value, region) => {
-          if (!value || value === '') return '';
-          const num = toNumber(value);
-          if (!num) return '';
-          
-          // India: Round to nearest 1,000
-          if (region === 'India') {
-            return Math.round(num / 1000) * 1000;
-          }
-          // US/UK: Round to nearest 100
-          else if (region === 'US' || region === 'UK') {
-            return Math.round(num / 100) * 100;
-          }
-          
-          return num; // Fallback: no rounding
-        };
-        
-        // Determine range start/mid/end based on category, then round by region
+        // Determine range start/mid/end based on category
         let rangeStart, rangeMid, rangeEnd;
         if (category === 'X0') {
           // X0: P25 → P62.5 → P90
-          rangeStart = roundCurrency(toNumber(p25) || toNumber(p40) || toNumber(p50) || '', region);
-          rangeMid = roundCurrency(toNumber(p625) || toNumber(p75) || toNumber(p90) || '', region);
-          rangeEnd = roundCurrency(toNumber(p90) || '', region);
+          rangeStart = toNumber(p25) || toNumber(p40) || toNumber(p50) || '';
+          rangeMid = toNumber(p625) || toNumber(p75) || toNumber(p90) || '';
+          rangeEnd = toNumber(p90) || '';
         } else {
           // Y1: P10 → P40 → P62.5
-          rangeStart = roundCurrency(toNumber(p10) || toNumber(p25) || toNumber(p40) || '', region);
-          rangeMid = roundCurrency(toNumber(p40) || toNumber(p50) || toNumber(p625) || '', region);
-          rangeEnd = roundCurrency(toNumber(p625) || toNumber(p75) || toNumber(p90) || '', region);
+          rangeStart = toNumber(p10) || toNumber(p25) || toNumber(p40) || '';
+          rangeMid = toNumber(p40) || toNumber(p50) || toNumber(p625) || '';
+          rangeEnd = toNumber(p625) || toNumber(p75) || toNumber(p90) || '';
         }
         
         // OPTIMIZED: Calculate CR values from pre-indexed employee groups (instant lookup!)
-        // CRITICAL: Use aonCode (not execDesc) AND normalize region to match _preIndexEmployeesForCR_() key format
-        // Both internal stats and CR use: ${normRegion}|${aonCode}|${level} (where US → USA)
+        // Build full Aon code: base code + level token (e.g., "EN.SODE.P3")
+        const levelToken = _ciqLevelToToken_(ciqLevel);
+        const fullAonCode = `${aonCode}.${levelToken}`;
+        
+        // Normalize region to match _preIndexEmployeesForCR_() key format
         const crRegion = region === 'US' ? 'USA' : region;
-        const empKey = `${crRegion}|${aonCode}|${ciqLevel}`;
+        const empKey = `${crRegion}|${fullAonCode}`;
         const empGroup = empIndex.get(empKey);
         let crStats = { avgCR: '', ttCR: '', newHireCR: '', btCR: '' };
         
         // Log first 5 CR lookups for debugging
         if (totalCombinations <= 5) {
           const found = empIndex.has(empKey);
-          const empCount = empGroup ? empGroup.salaries.length : 0;
-          Logger.log(`CR Lookup ${totalCombinations}: key="${empKey}" (raw region="${region}", normalized="${crRegion}") found=${found} employees=${empCount} intStats=${intStats.n}`);
+          if (found && empGroup) {
+            Logger.log(`CR Lookup ${totalCombinations}: key="${empKey}" found=true salaries:${empGroup.salaries.length}, TT:${empGroup.ttSalaries.length}, BT:${empGroup.btSalaries.length}, NH:${empGroup.nhSalaries.length}`);
+          } else {
+            Logger.log(`CR Lookup ${totalCombinations}: key="${empKey}" found=false`);
+          }
         }
         
         if (empGroup && rangeMid && rangeMid > 0) {
@@ -6104,16 +5085,16 @@ function rebuildFullListAllCombinations_() {
           execDesc,     // Job Family (Exec)
           category,     // Category
           ciqLevel,     // CIQ Level
-          roundCurrency(p10, region),   // P10 (rounded)
-          roundCurrency(p25, region),   // P25 (rounded)
-          roundCurrency(p40, region),   // P40 (rounded)
-          roundCurrency(p50, region),   // P50 (rounded)
-          roundCurrency(p625, region),  // P62.5 (rounded)
-          roundCurrency(p75, region),   // P75 (rounded)
-          roundCurrency(p90, region),   // P90 (rounded)
-          rangeStart,   // Range Start (P25 for X0, P10 for Y1) - already rounded
-          rangeMid,     // Range Mid (P62.5 for X0, P40 for Y1) - already rounded
-          rangeEnd,     // Range End (P90 for X0, P62.5 for Y1) - already rounded
+          toNumber(p10) || '',
+          toNumber(p25) || '',
+          toNumber(p40) || '',
+          toNumber(p50) || '',
+          toNumber(p625) || '',
+          toNumber(p75) || '',
+          toNumber(p90) || '',
+          rangeStart,   // Range Start (P25 for X0, P10 for Y1)
+          rangeMid,     // Range Mid (P62.5 for X0, P40 for Y1)
+          rangeEnd,     // Range End (P90 for X0, P62.5 for Y1)
           intStats.min,
           intStats.med,
           intStats.max,
@@ -6152,14 +5133,7 @@ function rebuildFullListAllCombinations_() {
   // Clear cache
   CacheService.getDocumentCache().removeAll(['MAP:FULL_LIST']);
   
-  // Count combinations with CR data
-  let combinationsWithCR = 0;
-  rows.forEach(row => {
-    if (row[20]) combinationsWithCR++; // Column U = Avg CR (index 20)
-  });
-  
   Logger.log(`Internal stats summary: ${combinationsWithInternalData} out of ${totalCombinations} combinations have employee data`);
-  Logger.log(`CR calculations summary: ${combinationsWithCR} out of ${totalCombinations} combinations have Avg CR values`);
   
   const msg = `✅ Generated ${rows.length} combinations for ${familiesX0Y1.length} families\n⚡ Optimized: 90% faster (v4.6.0)\n📊 Internal stats: ${combinationsWithInternalData}/${totalCombinations}`;
   SpreadsheetApp.getActive().toast(msg, 'Full List Complete', 5);
@@ -6206,27 +5180,24 @@ function freshBuild() {
     // Step 1: Create Aon region tabs
     SpreadsheetApp.getActive().toast('⏳ Step 1/5: Creating Aon region tabs...', 'Fresh Build', 3);
     createAonPlaceholderSheets_();
-    Utilities.sleep(300);  // OPTIMIZED: Reduced from 500ms
+    Utilities.sleep(500);
     
     // Step 2: Create mapping sheets
     SpreadsheetApp.getActive().toast('⏳ Step 2/5: Creating mapping sheets...', 'Fresh Build', 3);
     createMappingPlaceholderSheets_();
     createLegacyMappingsSheet_();
-    Utilities.sleep(300);  // OPTIMIZED: Reduced from 500ms
+    Utilities.sleep(500);
     
     // Step 3: Create Lookup sheet
     SpreadsheetApp.getActive().toast('⏳ Step 3/5: Creating Lookup sheet...', 'Fresh Build', 3);
     createLookupSheet_();
-    Utilities.sleep(300);  // OPTIMIZED: Reduced from 500ms
-    
-    // Clear caches so calculator UI reads fresh Lookup data
-    clearAllCaches_();
+    Utilities.sleep(500);
     
     // Step 4: Create both calculator UIs
     SpreadsheetApp.getActive().toast('⏳ Step 4/5: Creating calculator UIs...', 'Fresh Build', 3);
     buildCalculatorUI_();
     buildCalculatorUIForY1_();
-    Utilities.sleep(300);  // OPTIMIZED: Reduced from 500ms
+    Utilities.sleep(500);
     
     // Step 5: Create Full List placeholders
     SpreadsheetApp.getActive().toast('⏳ Step 5/5: Creating Full List placeholders...', 'Fresh Build', 3);
@@ -6272,32 +5243,32 @@ function importBobDataHeadless() {
     // Step 1: Import Base Data
     Logger.log('Step 1/8: Importing Base Data...');
     importBobDataSimpleWithLookup();
-    Utilities.sleep(500);  // OPTIMIZED: Reduced from 1000ms
+    Utilities.sleep(1000);
     
     // Step 2: Import Bonus History
     Logger.log('Step 2/8: Importing Bonus History...');
     importBobBonusHistoryLatest();
-    Utilities.sleep(500);  // OPTIMIZED: Reduced from 1000ms
+    Utilities.sleep(1000);
     
     // Step 3: Import Comp History
     Logger.log('Step 3/8: Importing Comp History...');
     importBobCompHistoryLatest();
-    Utilities.sleep(500);  // OPTIMIZED: Reduced from 1000ms
+    Utilities.sleep(1000);
     
     // Step 4: Import Performance Ratings
     Logger.log('Step 4/8: Importing Performance Ratings...');
     importBobPerformanceRatings();
-    Utilities.sleep(500);  // OPTIMIZED: Reduced from 1000ms
+    Utilities.sleep(1000);
     
     // Step 5: Sync Employees Mapped with smart logic and anomaly detection
     Logger.log('Step 5/6: Syncing Employees Mapped (smart mapping + anomaly detection)...');
     syncEmployeesMappedSheet_();
-    Utilities.sleep(300);  // OPTIMIZED: Reduced from 500ms
+    Utilities.sleep(500);
     
     // Step 6: Update Legacy Mappings from approved entries (feedback loop)
     Logger.log('Step 6/6: Updating Legacy Mappings from approved entries...');
     updateLegacyMappingsFromApproved_();
-    Utilities.sleep(300);  // OPTIMIZED: Reduced from 500ms
+    Utilities.sleep(500);
     
     Logger.log(`[${new Date().toISOString()}] Bob Data Import Complete - Success`);
     
@@ -6375,10 +5346,9 @@ function importBobData() {
       '   • Yellow rows = Needs Review ⚠️\n' +
       '   • Red rows = Rejected/Missing\n' +
       '   Change Status dropdown to approve mappings\n\n' +
-      '2️⃣ Edit mappings (YELLOW HEADERS = editable):\n' +
-      '   • Column F: Aon Code (e.g., EN.SODE)\n' +
-      '   • Column I: Full Aon Code (e.g., EN.SODE.P3)\n' +
-      '   • Column H: Level (from Bob, usually correct)\n' +
+      '2️⃣ For each employee, verify:\n' +
+      '   • Aon Code (job family)\n' +
+      '   • Level (L2 IC through L9 Mgr)\n' +
       '   • Check Level Anomaly column (orange)\n' +
       '   • Check Title Anomaly column (purple)\n\n' +
       '3️⃣ Run: 📊 Build Market Data\n\n' +
@@ -6424,12 +5394,12 @@ function buildMarketData() {
     // Step 1: Validate prerequisites
     SpreadsheetApp.getActive().toast('⏳ Step 1/3: Validating prerequisites...', 'Build Market Data', 3);
     validatePrerequisites_();
-    Utilities.sleep(300);  // OPTIMIZED: Reduced from 500ms
+    Utilities.sleep(500);
     
     // Step 2: Build Full List (all X0/Y1 combinations)
     SpreadsheetApp.getActive().toast('⏳ Step 2/3: Building Full List...', 'Build Market Data', 5);
     rebuildFullListAllCombinations_();
-    Utilities.sleep(500);  // OPTIMIZED: Reduced from 1000ms
+    Utilities.sleep(1000);
     
     // Step 3: Build Full List USD
     SpreadsheetApp.getActive().toast('⏳ Step 3/3: Building Full List USD...', 'Build Market Data', 3);
@@ -6456,53 +5426,59 @@ function buildMarketData() {
 }
 
 /**
- * Creates intuitive menu when spreadsheet is opened
- * Organized by workflow: Setup → Review → Advanced Tools → Help
+ * Creates simplified menu when spreadsheet is opened
  */
+/**
+ * Rebuilds both X0 and Y1 calculator UIs
+ */
+function rebuildBothCalculatorUIs() {
+  SpreadsheetApp.getActive().toast('Rebuilding X0 calculator...', 'Building', 3);
+  buildCalculatorUI_();
+  
+  SpreadsheetApp.getActive().toast('Rebuilding Y1 calculator...', 'Building', 3);
+  buildCalculatorUIForY1_();
+  
+  SpreadsheetApp.getActive().toast('✅ Both calculators rebuilt successfully!', 'Complete', 5);
+}
+
 function onOpen() {
   const ui = SpreadsheetApp.getUi();
   
-  // Main menu - 3-step workflow
+  // Main menu with 3 core functions
   const menu = ui.createMenu('💰 Salary Ranges Calculator');
   
-  // === SETUP WORKFLOW ===
-  menu.addItem('🚀 Quick Start Guide', 'showQuickStart')
+  menu.addItem('🏗️ Fresh Build (Create All Sheets)', 'freshBuild')
       .addSeparator()
-      .addItem('1️⃣ Fresh Build (Create All Sheets)', 'freshBuild')
-      .addItem('2️⃣ Import Bob Data', 'importBobData')
-      .addItem('3️⃣ Build Market Data', 'buildMarketData')
+      .addItem('📥 Import Bob Data', 'importBobData')
+      .addSeparator()
+      .addItem('📊 Build Market Data (Full Lists)', 'buildMarketData')
       .addSeparator();
   
-  // === REVIEW & QUALITY ===
-  const reviewMenu = ui.createMenu('📋 Review & Quality')
-    .addItem('👥 Review Employee Mappings', 'reviewEmployeeMappings')
+  // Tools submenu
+  const toolsMenu = ui.createMenu('🔧 Tools')
+    .addItem('⏰ Import Bob Data (Headless)', 'importBobDataHeadless')
+    .addItem('🔔 Setup Daily Import Trigger', 'setupDailyImportTrigger')
     .addSeparator()
-    .addItem('📊 Review Range Progression', 'reviewRangeProgression')
-    .addItem('✅ Apply Range Corrections', 'applyRangeCorrections');
-  
-  // === AUTOMATION & TOOLS ===
-  const toolsMenu = ui.createMenu('🔧 Advanced Tools')
-    .addItem('⏰ Setup Daily Auto-Import', 'setupDailyImportTrigger')
-    .addItem('🤖 Import Bob Data (Headless)', 'importBobDataHeadless')
+    .addItem('📤 Export Proposed Ranges', 'exportProposedSalaryRanges_')
+    .addItem('🔄 Rebuild Lookup Sheet', 'createLookupSheet_')
+    .addItem('🎨 Rebuild Calculator UIs', 'rebuildBothCalculatorUIs')
     .addSeparator()
-    .addItem('🔄 Refresh Market Data Availability', 'refreshMarketDataAvailability')
-    .addItem('🔄 Rebuild Lookup Sheet', 'rebuildLookupSheet')
-    .addItem('🔄 Rebuild Calculator Formulas', 'rebuildCalculatorFormulas')
     .addItem('💱 Apply Currency Format', 'applyCurrency_')
     .addItem('🗑️ Clear All Caches', 'clearAllCaches_')
     .addSeparator()
-    .addItem('📂 Update Legacy Mappings', 'updateLegacyMappingsFromApproved_');
+    .addItem('🔄 Update Legacy Mappings from Approved', 'updateLegacyMappingsFromApproved_')
+    .addSeparator()
+    .addItem('📖 Generate Help Sheet', 'buildHelpSheet_')
+    .addItem('ℹ️ Quick Instructions', 'showInstructions');
   
-  // === HELP ===
-  const helpMenu = ui.createMenu('❓ Help')
-    .addItem('📖 Generate Full Help Sheet', 'buildHelpSheet_')
-    .addItem('⚡ Quick Instructions', 'showInstructions')
-    .addItem('🆕 What\'s New (v4.14)', 'showWhatsNew');
-  
-  menu.addSubMenu(reviewMenu)
+  menu.addSeparator()
+      .addItem('✅ Review Employee Mappings', 'reviewEmployeeMappings')
+      .addSeparator()
       .addSubMenu(toolsMenu)
-      .addSubMenu(helpMenu)
       .addToUi();
+  
+  // Auto-ensure pickers for both calculators
+  // (Job family dropdowns populated on Fresh Build)
 }
 
 /**
@@ -6571,62 +5547,6 @@ function setupDailyImportTrigger() {
     );
   } catch (e) {
     ui.alert('❌ Error', 'Failed to create trigger: ' + e.message, ui.ButtonSet.OK);
-  }
-}
-
-/**
- * Rebuild Calculator Formulas
- * Fixes #REF! errors by regenerating all formulas in both calculator sheets
- * Use this if:
- * - Calculator shows #REF! errors after switching to USD
- * - Formulas were created before Full List USD existed
- * - After major data structure changes
- */
-function rebuildCalculatorFormulas() {
-  const ui = SpreadsheetApp.getUi();
-  
-  const response = ui.alert(
-    '🔄 Rebuild Calculator Formulas',
-    'This will regenerate all formulas in both calculator sheets:\n\n' +
-    '• Engineering and Product (X0)\n' +
-    '• Everyone Else (Y1)\n\n' +
-    'This fixes:\n' +
-    '✓ #REF! errors when switching to USD\n' +
-    '✓ Broken XLOOKUP references\n' +
-    '✓ Formula inconsistencies\n\n' +
-    'Current data and selections will be preserved.\n\n' +
-    'Continue?',
-    ui.ButtonSet.YES_NO
-  );
-  
-  if (response !== ui.Button.YES) {
-    ui.alert('Cancelled', 'No changes were made.', ui.ButtonSet.OK);
-    return;
-  }
-  
-  try {
-    SpreadsheetApp.getActive().toast('Rebuilding calculators...', 'Working', 3);
-    
-    // Rebuild both calculator UIs
-    buildCalculatorUI_();
-    buildCalculatorUIForY1_();
-    
-    // Clear caches to ensure fresh data
-    clearAllCaches_();
-    
-    ui.alert(
-      '✅ Calculators Rebuilt!',
-      'Both calculator sheets have been updated:\n\n' +
-      '✓ Engineering and Product (X0)\n' +
-      '✓ Everyone Else (Y1)\n\n' +
-      'All formulas regenerated with correct references.\n' +
-      'Caches cleared for fresh data.\n\n' +
-      'Test by switching Currency to USD.',
-      ui.ButtonSet.OK
-    );
-  } catch (e) {
-    ui.alert('❌ Error', 'Failed to rebuild calculators: ' + e.message, ui.ButtonSet.OK);
-    Logger.log('ERROR in rebuildCalculatorFormulas: ' + e.message + '\n' + e.stack);
   }
 }
 
@@ -6717,570 +5637,49 @@ function importAllBobData() {
 /**
  * Show instructions dialog
  */
-/**
- * Shows Quick Start guide with 3-step workflow
- */
-function showQuickStart() {
-  const ui = SpreadsheetApp.getUi();
-  ui.alert(
-    '🚀 Quick Start Guide',
-    '═══════════════════════════════════════\n' +
-    '3-STEP WORKFLOW:\n' +
-    '═══════════════════════════════════════\n\n' +
-    '1️⃣ FRESH BUILD\n' +
-    '   → Creates all sheets & structure\n' +
-    '   → Imports Bob data automatically\n' +
-    '   → Run once or when starting fresh\n\n' +
-    '2️⃣ REVIEW EMPLOYEE MAPPINGS\n' +
-    '   → Check Employees Mapped sheet\n' +
-    '   → Yellow headers (F, I) = editable columns\n' +
-    '   → Edit: Aon Code & Full Aon Code\n' +
-    '   → Approve mappings (Status column)\n' +
-    '   → Watch for: Promotions, Overrides, Anomalies\n\n' +
-    '3️⃣ BUILD MARKET DATA\n' +
-    '   → Generates Full List & USD version\n' +
-    '   → Updates calculator sheets\n' +
-    '   → Ready for analysis!\n\n' +
-    '═══════════════════════════════════════\n' +
-    'QUALITY CHECKS:\n' +
-    '═══════════════════════════════════════\n\n' +
-    '📋 Review & Quality → Review Range Progression\n' +
-    '   → Ensures ranges increase with levels\n' +
-    '   → Flags violations for correction\n\n' +
-    '═══════════════════════════════════════\n' +
-    'For detailed help: Help → Generate Full Help Sheet',
-    ui.ButtonSet.OK
-  );
-}
-
-/**
- * Shows What\'s New in current version
- */
-function showWhatsNew() {
-  const ui = SpreadsheetApp.getUi();
-  ui.alert(
-    '🆕 What\'s New in v4.14',
-    '═══════════════════════════════════════\n' +
-    'LATEST FEATURES:\n' +
-    '═══════════════════════════════════════\n\n' +
-    '🔵 MAPPING OVERRIDE DETECTION (v4.14)\n' +
-    '   → New column: Tracks when Full Aon Code ≠ F+H\n' +
-    '   → See: "Using R3 instead of P3"\n' +
-    '   → Purpose: Track rollup/custom code usage\n\n' +
-    '📈 RECENT PROMOTION FLAGGING (v4.13)\n' +
-    '   → Flags promotions in last 90 days\n' +
-    '   → Shows: "Promoted 2 months ago - verify"\n' +
-    '   → Ensures mappings stay current\n\n' +
-    '📊 RANGE PROGRESSION QA (v4.10)\n' +
-    '   → Review → Review Range Progression\n' +
-    '   → Detects ranges that decrease\n' +
-    '   → Apply corrections workflow\n\n' +
-    '💾 FULL AON CODE PERSISTENCE (v4.12)\n' +
-    '   → Column I edits preserved across imports\n' +
-    '   → Edit once, stays edited\n\n' +
-    '🎯 .5 LEVEL FIX (v4.9.1)\n' +
-    '   → L5.5 IC now shows 1.2× progression\n' +
-    '   → When L6 IC is blank\n\n' +
-    '🔴 MARKET DATA MISSING (v4.9)\n' +
-    '   → Flags employees with no Aon data\n' +
-    '   → Shows: "No US data", etc.\n\n' +
-    '═══════════════════════════════════════\n' +
-    'Full changelog in code header (Lines 17-50)',
-    ui.ButtonSet.OK
-  );
-}
-
-/**
- * Shows quick instructions for common tasks
- */
 function showInstructions() {
   const ui = SpreadsheetApp.getUi();
   const html = HtmlService.createHtmlOutput(`
-    <style>
-      body { font-family: Arial, sans-serif; padding: 20px; }
-      h2 { color: #1a73e8; border-bottom: 2px solid #1a73e8; padding-bottom: 10px; }
-      h3 { color: #34a853; margin-top: 20px; }
-      .workflow { background: #e8f0fe; padding: 15px; border-radius: 8px; margin: 10px 0; }
-      .step { font-weight: bold; color: #1a73e8; }
-      .editable { background: #fff3cd; padding: 5px; border-radius: 4px; }
-      code { background: #f1f3f4; padding: 2px 6px; border-radius: 3px; }
-      .warning { background: #fef7e0; border-left: 4px solid #f9ab00; padding: 10px; margin: 10px 0; }
-    </style>
+    <h2>Salary Ranges Calculator - Quick Start</h2>
+    <h3>First Time Setup:</h3>
+    <ol>
+      <li><strong>Setup → Create Aon Region Tabs</strong> - Creates US, UK, India tabs</li>
+      <li>Paste your Aon market data into the region tabs</li>
+      <li><strong>Setup → Create Mapping Tabs</strong> - Creates mapping sheets</li>
+      <li><strong>Build → Seed Exec Mappings</strong> - Auto-populate job families</li>
+      <li><strong>Setup → Build Calculator UI</strong> - Creates interactive calculator</li>
+    </ol>
     
-    <h2>💰 Salary Ranges Calculator - Quick Reference</h2>
+    <h3>Regular Workflow:</h3>
+    <ol>
+      <li><strong>Import Data → Import All Bob Data</strong> - Sync employee data</li>
+      <li><strong>Build → Rebuild Full List Tabs</strong> - Generate salary ranges</li>
+      <li>Use the Salary Ranges sheet or custom functions in formulas</li>
+    </ol>
     
-    <div class="workflow">
-      <h3>🏗️ 3-Step Workflow:</h3>
-      <p><span class="step">1. Fresh Build</span> → Creates all sheets & imports data</p>
-      <p><span class="step">2. Review Mappings</span> → Edit & approve employee mappings</p>
-      <p><span class="step">3. Build Market Data</span> → Generate Full Lists & calculators</p>
-    </div>
-    
-    <h3>✏️ Employees Mapped - Editable Columns:</h3>
+    <h3>Custom Functions:</h3>
     <ul>
-      <li><span class="editable">Column F: Aon Code</span> - Base family code (e.g., EN.SODE)</li>
-      <li><span class="editable">Column I: Full Aon Code</span> - Complete code (e.g., EN.SODE.P3 or EN.SODE.R3)</li>
-      <li><strong>Column H: Level</strong> - From Bob (usually don't edit)</li>
-      <li><strong>Column M: Status</strong> - Approved/Needs Review/Rejected</li>
+      <li><code>=SALARY_RANGE(category, region, family, level)</code></li>
+      <li><code>=SALARY_RANGE_MIN(category, region, family, level)</code></li>
+      <li><code>=INTERNAL_STATS(region, family, level)</code></li>
+      <li><code>=AON_P50(region, family, level)</code> - Market 50th percentile</li>
     </ul>
     
-    <div class="warning">
-      <strong>💡 Yellow headers = Editable columns!</strong> Hover for examples.
-    </div>
-    
-    <h3>🚨 Watch For:</h3>
+    <h3>Categories:</h3>
     <ul>
-      <li>🔵 <strong>Mapping Override</strong> - Using rollup/custom codes</li>
-      <li>📈 <strong>Recent Promotion</strong> - Verify mapping after promotion</li>
-      <li>🟠 <strong>Level Anomaly</strong> - Bob level ≠ Aon code level</li>
-      <li>🟣 <strong>Title Anomaly</strong> - Mapping differs from others with same title</li>
-      <li>🔴 <strong>Market Data Missing</strong> - No Aon data for this combo</li>
+      <li><strong>X0 (Engineering/Product)</strong>: P25 (start) / P50 (mid) / P90 (end) - Engineering & Product roles</li>
+      <li><strong>Y1 (Everyone Else)</strong>: P10 (start) / P40 (mid) / P62.5 (end) - All other roles</li>
     </ul>
+    <p><em>Note: Category is automatically determined based on job family</em></p>
     
-    <h3>📊 Range Categories:</h3>
-    <ul>
-      <li><strong>X0 (Engineering/Product)</strong>: P25 (start) / P62.5 (mid) / P90 (end)</li>
-      <li><strong>Y1 (Everyone Else)</strong>: P10 (start) / P40 (mid) / P62.5 (end)</li>
-    </ul>
+    <p><strong>Aon Data Source:</strong><br>
+    <a href="https://drive.google.com/drive/folders/1bTogiTF18CPLHLZwJbDDrZg0H3SZczs-" target="_blank">
+      Google Drive Folder
+    </a></p>
     
-    <h3>🔍 Quality Checks:</h3>
-    <p><strong>Review & Quality → Review Range Progression</strong></p>
-    <ul>
-      <li>Detects ranges that decrease or stay flat</li>
-      <li>Recommends corrections</li>
-      <li>Apply approved changes</li>
-    </ul>
-    
-    <p style="margin-top: 30px;"><em>For detailed help: <strong>Help → Generate Full Help Sheet</strong></em></p>
+    <p><em>For detailed help, run: Setup → Generate Help Sheet</em></p>
   `)
-    .setWidth(700)
-    .setHeight(650);
-  ui.showModalDialog(html, '💰 Salary Ranges Calculator - Quick Reference');
-}
-
-// ============================================================================
-// RANGE PROGRESSION QA SYSTEM
-// ============================================================================
-
-/**
- * Reviews Full List for range progression issues
- * Creates/updates "Range Progression Issues" sheet with flagged cases
- * 
- * Checks:
- * - Range Start should increase as levels go up
- * - Range Mid should increase as levels go up
- * - Range End should increase as levels go up
- * 
- * Groups by: Region + Job Family (Aon Code base)
- * Sorts by: Level order (L2 IC → L9 Mgr)
- * 
- * Flags violations like:
- * - "L6 IC Range Mid (₹1,000,000) < L5 IC Range Mid (₹1,200,000)"
- */
-function reviewRangeProgression() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const ui = SpreadsheetApp.getUi();
-  
-  ui.alert('🔍 Range Progression Review', 
-    'This will analyze Full List for salary ranges that decrease or stay flat as levels increase.\n\n' +
-    'Violations will be flagged in a new "Range Progression Issues" sheet for your review.\n\n' +
-    'Click OK to start...', 
-    ui.ButtonSet.OK_CANCEL) === ui.Button.CANCEL ? null : (() => {
-    
-    SpreadsheetApp.getActive().toast('Reading Full List...', '🔍 Range Progression Review', -1);
-    
-    // Read Full List
-    const fullListSheet = ss.getSheetByName('Full List');
-    if (!fullListSheet) {
-      ui.alert('❌ Error', 'Full List sheet not found. Please run "Build Market Data" first.', ui.ButtonSet.OK);
-      return;
-    }
-    
-    const data = fullListSheet.getDataRange().getValues();
-    const headers = data[0];
-    
-    // Find column indices
-    const colIdx = {};
-    headers.forEach((h, i) => { colIdx[h] = i; });
-    
-    const requiredCols = ['Region', 'Aon Code (base)', 'CIQ Level', 'Range Start', 'Range Mid', 'Range End'];
-    const missing = requiredCols.filter(c => colIdx[c] === undefined);
-    if (missing.length > 0) {
-      ui.alert('❌ Error', `Missing columns in Full List: ${missing.join(', ')}`, ui.ButtonSet.OK);
-      return;
-    }
-    
-    // Define level order for sorting
-    const levelOrder = {
-      'L2 IC': 2, 'L3 IC': 3, 'L4 IC': 4, 'L5 IC': 5, 'L5.5 IC': 5.5, 'L6 IC': 6, 'L6.5 IC': 6.5, 'L7 IC': 7,
-      'L4 Mgr': 14, 'L5 Mgr': 15, 'L5.5 Mgr': 15.5, 'L6 Mgr': 16, 'L6.5 Mgr': 16.5, 'L7 Mgr': 17, 'L8 Mgr': 18, 'L9 Mgr': 19
-    };
-    
-    // Group by Region + Aon Code base (without .PX or .RX suffix)
-    const groups = new Map();
-    
-    for (let i = 1; i < data.length; i++) {
-      const row = data[i];
-      const region = row[colIdx['Region']];
-      const aonCode = row[colIdx['Aon Code (base)']];
-      const level = row[colIdx['CIQ Level']];
-      const rangeStart = row[colIdx['Range Start']];
-      const rangeMid = row[colIdx['Range Mid']];
-      const rangeEnd = row[colIdx['Range End']];
-      
-      // Skip if no range data
-      if (!rangeStart && !rangeMid && !rangeEnd) continue;
-      
-      // Extract base Aon Code (remove .P3, .R4, etc.)
-      const aonBase = aonCode ? aonCode.replace(/\.[PR]\d+$/, '') : '';
-      
-      const groupKey = `${region}|${aonBase}`;
-      
-      if (!groups.has(groupKey)) {
-        groups.set(groupKey, []);
-      }
-      
-      groups.get(groupKey).push({
-        region,
-        aonCode: aonBase,
-        level,
-        levelOrder: levelOrder[level] || 999,
-        rangeStart: parseFloat(rangeStart) || 0,
-        rangeMid: parseFloat(rangeMid) || 0,
-        rangeEnd: parseFloat(rangeEnd) || 0,
-        rowIndex: i + 1  // 1-based for sheet reference
-      });
-    }
-    
-    SpreadsheetApp.getActive().toast(`Analyzing ${groups.size} job family/region combinations...`, '🔍 Range Progression Review', 3);
-    
-    // Analyze each group for violations
-    const issues = [];
-    
-    for (const [groupKey, rows] of groups.entries()) {
-      // Sort by level order
-      rows.sort((a, b) => a.levelOrder - b.levelOrder);
-      
-      // Check progression for each metric
-      for (let i = 1; i < rows.length; i++) {
-        const prev = rows[i - 1];
-        const curr = rows[i];
-        
-        // Skip if either level has no data
-        if (!prev.rangeStart && !prev.rangeMid && !prev.rangeEnd) continue;
-        if (!curr.rangeStart && !curr.rangeMid && !curr.rangeEnd) continue;
-        
-        // Check Range Start
-        if (prev.rangeStart > 0 && curr.rangeStart > 0 && curr.rangeStart <= prev.rangeStart) {
-          issues.push({
-            region: curr.region,
-            jobFamily: curr.aonCode,
-            level: curr.level,
-            metric: 'Range Start',
-            currentValue: curr.rangeStart,
-            previousLevel: prev.level,
-            previousValue: prev.rangeStart,
-            issue: `${curr.level} (${formatNumber(curr.rangeStart)}) ≤ ${prev.level} (${formatNumber(prev.rangeStart)})`,
-            recommended: Math.ceil(prev.rangeStart * 1.15),  // Suggest 15% increase
-            status: 'Pending'
-          });
-        }
-        
-        // Check Range Mid
-        if (prev.rangeMid > 0 && curr.rangeMid > 0 && curr.rangeMid <= prev.rangeMid) {
-          issues.push({
-            region: curr.region,
-            jobFamily: curr.aonCode,
-            level: curr.level,
-            metric: 'Range Mid',
-            currentValue: curr.rangeMid,
-            previousLevel: prev.level,
-            previousValue: prev.rangeMid,
-            issue: `${curr.level} (${formatNumber(curr.rangeMid)}) ≤ ${prev.level} (${formatNumber(prev.rangeMid)})`,
-            recommended: Math.ceil(prev.rangeMid * 1.15),  // Suggest 15% increase
-            status: 'Pending'
-          });
-        }
-        
-        // Check Range End
-        if (prev.rangeEnd > 0 && curr.rangeEnd > 0 && curr.rangeEnd <= prev.rangeEnd) {
-          issues.push({
-            region: curr.region,
-            jobFamily: curr.aonCode,
-            level: curr.level,
-            metric: 'Range End',
-            currentValue: curr.rangeEnd,
-            previousLevel: prev.level,
-            previousValue: prev.rangeEnd,
-            issue: `${curr.level} (${formatNumber(curr.rangeEnd)}) ≤ ${prev.level} (${formatNumber(prev.rangeEnd)})`,
-            recommended: Math.ceil(prev.rangeEnd * 1.15),  // Suggest 15% increase
-            status: 'Pending'
-          });
-        }
-      }
-    }
-    
-    // Create or update Range Progression Issues sheet
-    SpreadsheetApp.getActive().toast('Creating Range Progression Issues sheet...', '🔍 Range Progression Review', 3);
-    
-    let issuesSheet = ss.getSheetByName('Range Progression Issues');
-    if (!issuesSheet) {
-      issuesSheet = ss.insertSheet('Range Progression Issues');
-    } else {
-      issuesSheet.clear();
-    }
-    
-    // Write headers
-    const issueHeaders = [
-      'Region', 'Job Family', 'Level', 'Metric', 
-      'Current Value', 'Previous Level', 'Previous Value', 
-      'Issue Description', 'Recommended Value', 'Status'
-    ];
-    
-    issuesSheet.getRange(1, 1, 1, issueHeaders.length).setValues([issueHeaders])
-      .setFontWeight('bold')
-      .setBackground('#4285f4')
-      .setFontColor('white');
-    
-    // Write issues
-    if (issues.length > 0) {
-      const issueRows = issues.map(issue => [
-        issue.region,
-        issue.jobFamily,
-        issue.level,
-        issue.metric,
-        issue.currentValue,
-        issue.previousLevel,
-        issue.previousValue,
-        issue.issue,
-        issue.recommended,
-        issue.status
-      ]);
-      
-      issuesSheet.getRange(2, 1, issueRows.length, issueHeaders.length).setValues(issueRows);
-      
-      // Format numbers with currency
-      issuesSheet.getRange(2, 5, issueRows.length, 1).setNumberFormat('#,##0');  // Current Value
-      issuesSheet.getRange(2, 7, issueRows.length, 1).setNumberFormat('#,##0');  // Previous Value
-      issuesSheet.getRange(2, 9, issueRows.length, 1).setNumberFormat('#,##0');  // Recommended
-      
-      // Highlight issues (red background)
-      issuesSheet.getRange(2, 1, issueRows.length, issueHeaders.length).setBackground('#ffebee');
-      
-      // Add data validation for Status column (Pending/Approved/Rejected)
-      const statusRange = issuesSheet.getRange(2, 10, issueRows.length, 1);
-      const statusRule = SpreadsheetApp.newDataValidation()
-        .requireValueInList(['Pending', 'Approved', 'Rejected'], true)
-        .build();
-      statusRange.setDataValidation(statusRule);
-      
-      // Auto-resize columns
-      issuesSheet.autoResizeColumns(1, issueHeaders.length);
-      
-      // Freeze header row
-      issuesSheet.setFrozenRows(1);
-      
-      // Add instructions at the top
-      issuesSheet.insertRowBefore(1);
-      issuesSheet.getRange(1, 1, 1, issueHeaders.length).merge()
-        .setValue('📋 INSTRUCTIONS: Review each issue below. Edit "Recommended Value" if needed, then change "Status" to "Approved". Run "Apply Range Corrections" to update Full List.')
-        .setBackground('#fff3cd')
-        .setFontWeight('bold')
-        .setWrap(true);
-      issuesSheet.setRowHeight(1, 50);
-      
-      ui.alert('🔍 Range Progression Review Complete', 
-        `Found ${issues.length} range progression issue(s).\n\n` +
-        `These have been logged in the "Range Progression Issues" sheet.\n\n` +
-        `Next steps:\n` +
-        `1. Review each issue\n` +
-        `2. Edit "Recommended Value" if needed\n` +
-        `3. Change "Status" to "Approved" for issues you want to fix\n` +
-        `4. Run "Tools → Apply Range Corrections" to update Full List`,
-        ui.ButtonSet.OK);
-      
-      // Switch to issues sheet
-      ss.setActiveSheet(issuesSheet);
-      
-    } else {
-      issuesSheet.getRange(2, 1, 1, issueHeaders.length).setValues([
-        ['', '', '', '', '', '', '', '✅ No progression issues found!', '', '']
-      ]).setBackground('#d4edda').setFontWeight('bold');
-      
-      issuesSheet.autoResizeColumns(1, issueHeaders.length);
-      issuesSheet.setFrozenRows(1);
-      
-      ui.alert('✅ All Good!', 
-        'No range progression issues found.\n\n' +
-        'All salary ranges increase properly as levels go up.',
-        ui.ButtonSet.OK);
-    }
-    
-  })();
-}
-
-/**
- * Helper function to format numbers with commas
- */
-function formatNumber(num) {
-  if (!num) return '';
-  return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-}
-
-/**
- * Applies approved range corrections from "Range Progression Issues" back to Full List
- * Only applies corrections where Status = "Approved"
- * Updates both "Full List" and "Full List USD"
- */
-function applyRangeCorrections() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const ui = SpreadsheetApp.getUi();
-  
-  // Check if Range Progression Issues sheet exists
-  const issuesSheet = ss.getSheetByName('Range Progression Issues');
-  if (!issuesSheet) {
-    ui.alert('❌ Error', 
-      'Range Progression Issues sheet not found.\n\n' +
-      'Please run "Tools → Review Range Progression" first.',
-      ui.ButtonSet.OK);
-    return;
-  }
-  
-  // Confirm with user
-  const response = ui.alert('✅ Apply Range Corrections', 
-    'This will apply all APPROVED corrections from "Range Progression Issues" to Full List and Full List USD.\n\n' +
-    'Only rows with Status = "Approved" will be updated.\n\n' +
-    'This action cannot be undone. Continue?', 
-    ui.ButtonSet.OK_CANCEL);
-  
-  if (response !== ui.Button.OK) return;
-  
-  SpreadsheetApp.getActive().toast('Reading approved corrections...', '✅ Apply Range Corrections', -1);
-  
-  // Read issues sheet
-  const issuesData = issuesSheet.getDataRange().getValues();
-  
-  // Find instruction row (first row is instructions)
-  let headerRow = 1;
-  if (issuesData[0][0] && issuesData[0][0].toString().includes('INSTRUCTIONS')) {
-    headerRow = 2;
-  }
-  
-  const issuesHeaders = issuesData[headerRow - 1];
-  const issuesColIdx = {};
-  issuesHeaders.forEach((h, i) => { issuesColIdx[h] = i; });
-  
-  // Find approved corrections
-  const approvedCorrections = [];
-  
-  for (let i = headerRow; i < issuesData.length; i++) {
-    const row = issuesData[i];
-    const status = row[issuesColIdx['Status']];
-    
-    if (status === 'Approved') {
-      approvedCorrections.push({
-        region: row[issuesColIdx['Region']],
-        jobFamily: row[issuesColIdx['Job Family']],
-        level: row[issuesColIdx['Level']],
-        metric: row[issuesColIdx['Metric']],
-        recommendedValue: parseFloat(row[issuesColIdx['Recommended Value']]) || 0
-      });
-    }
-  }
-  
-  if (approvedCorrections.length === 0) {
-    ui.alert('ℹ️ No Approved Corrections', 
-      'No corrections with Status = "Approved" found.\n\n' +
-      'Please review the Range Progression Issues sheet and set Status to "Approved" for corrections you want to apply.',
-      ui.ButtonSet.OK);
-    return;
-  }
-  
-  SpreadsheetApp.getActive().toast(`Applying ${approvedCorrections.length} correction(s) to Full List...`, '✅ Apply Range Corrections', 3);
-  
-  // Read Full List
-  const fullListSheet = ss.getSheetByName('Full List');
-  if (!fullListSheet) {
-    ui.alert('❌ Error', 'Full List sheet not found.', ui.ButtonSet.OK);
-    return;
-  }
-  
-  const fullListData = fullListSheet.getDataRange().getValues();
-  const fullListHeaders = fullListData[0];
-  const fullListColIdx = {};
-  fullListHeaders.forEach((h, i) => { fullListColIdx[h] = i; });
-  
-  // Apply corrections to Full List
-  let updatedCount = 0;
-  
-  for (const correction of approvedCorrections) {
-    // Find matching row in Full List
-    for (let i = 1; i < fullListData.length; i++) {
-      const row = fullListData[i];
-      const region = row[fullListColIdx['Region']];
-      const aonCode = row[fullListColIdx['Aon Code (base)']];
-      const aonBase = aonCode ? aonCode.replace(/\.[PR]\d+$/, '') : '';
-      const level = row[fullListColIdx['CIQ Level']];
-      
-      if (region === correction.region && aonBase === correction.jobFamily && level === correction.level) {
-        // Update the appropriate metric
-        const metricCol = fullListColIdx[correction.metric];
-        if (metricCol !== undefined) {
-          fullListSheet.getRange(i + 1, metricCol + 1).setValue(correction.recommendedValue);
-          updatedCount++;
-          
-          Logger.log(`Updated: ${region} | ${aonBase} | ${level} | ${correction.metric} → ${correction.recommendedValue}`);
-        }
-      }
-    }
-  }
-  
-  // Update Full List USD if it exists
-  const fullListUSDSheet = ss.getSheetByName('Full List USD');
-  if (fullListUSDSheet) {
-    SpreadsheetApp.getActive().toast('Updating Full List USD...', '✅ Apply Range Corrections', 3);
-    
-    // Get FX rates from Full List (assumes columns are in same order)
-    const fxCol = fullListColIdx['FX Rate'];
-    
-    if (fxCol !== undefined) {
-      // Apply same corrections with FX conversion
-      for (const correction of approvedCorrections) {
-        for (let i = 1; i < fullListData.length; i++) {
-          const row = fullListData[i];
-          const region = row[fullListColIdx['Region']];
-          const aonCode = row[fullListColIdx['Aon Code (base)']];
-          const aonBase = aonCode ? aonCode.replace(/\.[PR]\d+$/, '') : '';
-          const level = row[fullListColIdx['CIQ Level']];
-          const fxRate = parseFloat(row[fxCol]) || 1;
-          
-          if (region === correction.region && aonBase === correction.jobFamily && level === correction.level) {
-            const metricCol = fullListColIdx[correction.metric];
-            if (metricCol !== undefined) {
-              const usdValue = correction.recommendedValue / fxRate;
-              fullListUSDSheet.getRange(i + 1, metricCol + 1).setValue(usdValue);
-            }
-          }
-        }
-      }
-    }
-  }
-  
-  // Mark applied corrections as "Applied" in issues sheet
-  for (let i = headerRow; i < issuesData.length; i++) {
-    const status = issuesData[i][issuesColIdx['Status']];
-    if (status === 'Approved') {
-      issuesSheet.getRange(i + 1, issuesColIdx['Status'] + 1).setValue('Applied');
-      issuesSheet.getRange(i + 1, 1, 1, issuesHeaders.length).setBackground('#d4edda');  // Green
-    }
-  }
-  
-  ui.alert('✅ Range Corrections Applied', 
-    `Successfully applied ${updatedCount} correction(s) to Full List.\n\n` +
-    `${fullListUSDSheet ? 'Full List USD has also been updated.\n\n' : ''}` +
-    `Applied corrections have been marked as "Applied" in the Range Progression Issues sheet.\n\n` +
-    `You may want to run "Build Market Data" again to refresh calculator sheets.`,
-    ui.ButtonSet.OK);
-  
-  SpreadsheetApp.getActive().toast('✅ Corrections applied successfully!', '', 3);
+    .setWidth(600)
+    .setHeight(600);
+  ui.showModalDialog(html, 'Salary Ranges Calculator - Instructions');
 }
