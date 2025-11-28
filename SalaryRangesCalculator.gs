@@ -14,7 +14,7 @@
  * - Persistent legacy mapping storage
  * - Interactive calculator UI
  * 
- * @version 4.17.0
+ * @version 4.18.0
  * @date 2025-11-28
  * @performance Highly optimized with strategic caching and batch operations:
  *   - Pre-loaded Aon data: Saves 10,080+ sheet reads (~95% faster market data build)
@@ -25,15 +25,17 @@
  *   - Legacy mappings batch load: Saves 600+ lookups (~90% faster mapping resolution)
  *   - Pre-indexed CR groups: ~98% faster CR calculations (Map-based grouping)
  *   - Reduced sleep timers: 500ms→300ms, 1000ms→500ms (~40% faster workflows)
- * @changelog v4.17.0 - FEATURE: Refresh Market Data Availability utility
+ * @changelog v4.18.0 - BUGFIX: Correct executive level mapping (E1/E3/E5/E6)
+ *   - FIXED: Executive level mappings now match Lookup table exactly
+ *   - E1 = L7 Mgr (VP) - was incorrectly mapped to L9 Mgr
+ *   - E3 = L8 Mgr (SVP) - was incorrectly mapped to L7 Mgr
+ *   - E5 = L9 Mgr (C-Suite) - was incorrectly mapped to L6 Mgr
+ *   - E6 = L10+ Mgr (CEO) - was incorrectly mapped to L5.5 Mgr
+ *   - IMPACT: SA.CRCE.E1 and other executive codes now resolve correctly
+ *   - FIXED: Both _parseLevelToken_ and _ciqLevelToToken_ now consistent
+ *   - RESULT: No more "No UK data" for executives with valid Aon data
+ * @previous v4.17.0 - FEATURE: Refresh Market Data Availability utility
  *   - NEW FUNCTION: refreshMarketDataAvailability() - Quick refresh of Column S
- *   - MENU: Added to Advanced Tools → "🔄 Refresh Market Data Availability"
- *   - USE CASE: After adding new Aon data, refresh without full Bob import
- *   - FAST: Only scans Column S (Market Data Missing), preserves all other data
- *   - SMART: Shows detailed results (updated count, cleared count, unchanged)
- *   - UI: Clear prompts and tips for troubleshooting missing data
- *   - CACHE: Auto-clears caches after refresh for next build
- * @previous v4.16.0 - PERFORMANCE PASS: Optimized timers + Documentation
  *   - REDUCED: Utilities.sleep() timers (500ms→300ms, 1000ms→500ms)
  *   - FASTER: Fresh Build (7s→5.5s), Import Bob Data (90s→75s)
  *   - REMOVED: 10+ deprecated functions (cleaned 200+ lines of dead code)
@@ -3952,17 +3954,23 @@ function _ciqLevelToToken_(ciqLevel) {
       return 'E1'; // L7 IC = E1
     }
   } else {
-    // Manager levels
-    if (levelNum <= 6.5) {
-      return `M${Math.floor(levelNum)}`;
-    } else if (levelNum === 7) {
-      return 'E1';
-    } else if (levelNum === 8) {
-      return 'E3';
+    // Manager levels: M4-M6 for standard, E1/E3/E5/E6 for executive
+    // From Lookup table:
+    // E1 = L7 Mgr (VP)
+    // E3 = L8 Mgr (SVP)
+    // E5 = L9 Mgr (C-Suite)
+    // E6 = L10+ Mgr (CEO)
+    // Note: Must match reverse mapping in _parseLevelToken_
+    if (levelNum >= 10) {
+      return 'E6'; // L10+ Mgr = E6 (CEO)
     } else if (levelNum === 9) {
-      return 'E5';
-    } else if (levelNum === 10) {
-      return 'E6';
+      return 'E5'; // L9 Mgr = E5 (C-Suite)
+    } else if (levelNum === 8) {
+      return 'E3'; // L8 Mgr = E3 (SVP)
+    } else if (levelNum === 7) {
+      return 'E1'; // L7 Mgr = E1 (VP)
+    } else if (levelNum >= 4 && levelNum <= 6.5) {
+      return `M${Math.floor(levelNum)}`; // L4-L6 Mgr = M4-M6
     }
   }
   
@@ -3974,6 +3982,8 @@ function _ciqLevelToToken_(ciqLevel) {
  */
 function _parseLevelToken_(token) {
   if (!token) return '';
+  
+  // Parse standard tokens (P5, M6, E1, E3, E5, E6, etc.)
   const match = token.match(/^([PME])(\d+)$/);
   if (!match) return '';
   
@@ -3983,13 +3993,15 @@ function _parseLevelToken_(token) {
   if (letter === 'P') return `L${num} IC`;
   if (letter === 'M') return `L${num} Mgr`;
   if (letter === 'E') {
-    // Executive mapping
-    if (num === 1) return 'L9 Mgr';
-    if (num === 2) return 'L8 Mgr';
-    if (num === 3) return 'L7 Mgr';
-    if (num === 4) return 'L6.5 Mgr';
-    if (num === 5) return 'L6 Mgr';
-    if (num === 6) return 'L5.5 Mgr';
+    // Executive mapping (from Lookup table):
+    // E1 = L7 Mgr (VP)
+    // E3 = L8 Mgr (SVP)
+    // E5 = L9 Mgr (C-Suite)
+    // E6 = L10+ Mgr (CEO)
+    if (num === 1) return 'L7 Mgr';
+    if (num === 3) return 'L8 Mgr';
+    if (num === 5) return 'L9 Mgr';
+    if (num === 6) return 'L10 Mgr';  // CEO level (if exists)
   }
   return '';
 }
