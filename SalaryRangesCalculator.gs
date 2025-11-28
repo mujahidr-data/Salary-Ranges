@@ -1384,12 +1384,11 @@ function _buildInternalIndex_() {
   // F: Aon Code, G: Job Family (Exec Description), H: Level, I: Full Aon Code, J: Mapping Override
   // K: Confidence, L: Source, M: Status, N: Base Salary, O: Start Date
   // P: Recent Promotion, Q: Level Anomaly, R: Title Anomaly, S: Market Data Missing
-  const iEmpID = 0;     // Column A: Employee ID
-  const iSite = 4;      // Column E: Site
-  const iAonCode = 5;   // Column F: Aon Code (base, e.g., "EN.SODE")
-  const iLevel = 7;     // Column H: Level (e.g., "L5 IC")
-  const iStatus = 12;   // Column M: Status
-  const iSalary = 13;   // Column N: Base Salary
+  const iEmpID = 0;       // Column A: Employee ID
+  const iSite = 4;        // Column E: Site
+  const iFullAonCode = 8; // Column I: Full Aon Code (e.g., "EN.SODE.P5" or "EN.SODE.E3")
+  const iStatus = 12;     // Column M: Status
+  const iSalary = 13;     // Column N: Base Salary
 
   const buckets = new Map();
   let processedCount = 0;
@@ -1402,8 +1401,7 @@ function _buildInternalIndex_() {
     
     const empID = String(row[iEmpID] || '').trim();
     const site = String(row[iSite] || '').trim();
-    const aonCode = String(row[iAonCode] || '').trim();
-    const level = String(row[iLevel] || '').trim();
+    const fullAonCode = String(row[iFullAonCode] || '').trim();
     const status = String(row[iStatus] || '').trim();
     const salary = row[iSalary];
     
@@ -1414,14 +1412,14 @@ function _buildInternalIndex_() {
       continue;
     }
     
-    // Skip if no mapping
-    if (!aonCode || !level) {
+    // Skip if no full Aon code mapping
+    if (!fullAonCode) {
       skippedNoMapping++;
       continue;
     }
     
-    // Skip if status is not Approved or Legacy (only use confirmed mappings)
-    if (status !== 'Approved' && status !== 'Legacy') {
+    // Skip if status is not Approved or Needs Review (match CR filter)
+    if (status !== 'Approved' && status !== 'Needs Review') {
       skippedNoMapping++;
       continue;
     }
@@ -1440,11 +1438,11 @@ function _buildInternalIndex_() {
     
     // Log first 3 employees for debugging
     if (processedCount <= 3) {
-      Logger.log(`Sample employee ${processedCount}: empID=${empID}, site=${normSite}, aonCode=${aonCode}, level=${level}, pay=${pay}, status=${status}, active=true`);
+      Logger.log(`Sample employee ${processedCount}: empID=${empID}, site=${normSite}, fullAonCode=${fullAonCode}, pay=${pay}, status=${status}, active=true`);
     }
     
-    // Create key: Region|AonCode|Level (e.g., "USA|EN.SODE|L5 IC")
-    const key = `${normSite}|${aonCode}|${level}`;
+    // Create key: Region|FullAonCode (e.g., "USA|EN.SODE.P5" to match CR keys)
+    const key = `${normSite}|${fullAonCode}`;
     if (!buckets.has(key)) buckets.set(key, []);
     buckets.get(key).push(pay);
     
@@ -5391,14 +5389,19 @@ function rebuildFullListAllCombinations_() {
         }
         
         // Get internal stats (if employees exist)
-        // NOTE: _buildInternalIndex_() normalizes "US" to "USA", so we need to match that
+        // NOTE: Both internal stats and CR use Full Aon Code (Column I) as the key
+        // Build full Aon code first (needed for both internal stats and CR lookups)
+        const levelToken = _ciqLevelToToken_(ciqLevel);
+        const fullAonCode = levelToken ? `${aonCode}.${levelToken}` : '';
+        
+        // Normalize region (US → USA for consistency)
         const intRegion = region === 'US' ? 'USA' : region;
-        const intKey = `${intRegion}|${aonCode}|${ciqLevel}`;
-        const intStats = internalIndex.get(intKey) || { min: '', med: '', max: '', n: 0 };
+        const intKey = fullAonCode ? `${intRegion}|${fullAonCode}` : '';
+        const intStats = intKey ? (internalIndex.get(intKey) || { min: '', med: '', max: '', n: 0 }) : { min: '', med: '', max: '', n: 0 };
         
         // Log first 5 lookups for debugging (Internal Stats)
         if (totalCombinations <= 5) {
-          const found = internalIndex.has(intKey);
+          const found = intKey && internalIndex.has(intKey);
           Logger.log(`Lookup ${totalCombinations}: key="${intKey}" found=${found} stats=${JSON.stringify(intStats)}`);
         }
         
@@ -5441,14 +5444,11 @@ function rebuildFullListAllCombinations_() {
         }
         
         // OPTIMIZED: Calculate CR values from pre-indexed employee groups (instant lookup!)
-        // Build full Aon code: base code + level token (e.g., "EN.SODE.P3")
-        const levelToken = _ciqLevelToToken_(ciqLevel);
-        const fullAonCode = `${aonCode}.${levelToken}`;
-        
+        // NOTE: fullAonCode was already built above for internal stats lookup
         // Normalize region to match _preIndexEmployeesForCR_() key format
         const crRegion = region === 'US' ? 'USA' : region;
-        const empKey = `${crRegion}|${fullAonCode}`;
-        const empGroup = empIndex.get(empKey);
+        const empKey = fullAonCode ? `${crRegion}|${fullAonCode}` : '';
+        const empGroup = empKey ? empIndex.get(empKey) : null;
         let crStats = { avgCR: '', ttCR: '', newHireCR: '', btCR: '' };
         
         // Log first 5 CR lookups for debugging
