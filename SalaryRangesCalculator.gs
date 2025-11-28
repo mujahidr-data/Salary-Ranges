@@ -14,7 +14,7 @@
  * - Persistent legacy mapping storage
  * - Interactive calculator UI
  * 
- * @version 4.26.0
+ * @version 4.26.1
  * @date 2025-11-28
  * @performance Highly optimized with strategic caching and batch operations:
  *   - Pre-loaded Aon data: Saves 10,080+ sheet reads (~95% faster market data build)
@@ -25,7 +25,18 @@
  *   - Legacy mappings batch load: Saves 600+ lookups (~90% faster mapping resolution)
  *   - Pre-indexed CR groups: ~98% faster CR calculations (Map-based grouping)
  *   - Reduced sleep timers: 500ms→300ms, 1000ms→500ms (~40% faster workflows)
- * @changelog v4.26.0 - CRITICAL FIX: CR values showing when employee count is 0
+ * @changelog v4.26.1 - BUGFIX: Range Progression Review "Missing columns" error
+ *   - USER REPORT: "error during range progression" with error "Missing columns in Full List: Aon Code"
+ *   - ROOT CAUSE: Column name mismatch between Full List schema and Range Progression functions:
+ *     • Full List uses: "Aon Code (base)" ✓
+ *     • reviewRangeProgression() expected: "Aon Code" ❌
+ *     • applyRangeCorrections() expected: "Aon Code" ❌ (2 instances)
+ *   - RESULT: Range Progression Review failed immediately with missing column error
+ *   - FIXED: Updated 3 references to use correct column name "Aon Code (base)":
+ *     • reviewRangeProgression(): Line 6803 (requiredCols) + Line 6822 (data reading)
+ *     • applyRangeCorrections(): Line 7118 (Full List update) + Line 7149 (Full List USD update)
+ *   - IMPACT: Range Progression Review now works correctly
+ * @previous v4.26.0 - CRITICAL FIX: CR values showing when employee count is 0
  *   - USER REPORT: "how do we have avg cr when there are no employees?"
  *   - ROOT CAUSE: Active/Inactive filter mismatch between two functions:
  *     1. _buildInternalIndex_() counted ONLY active employees ✓
@@ -6800,7 +6811,7 @@ function reviewRangeProgression() {
     const colIdx = {};
     headers.forEach((h, i) => { colIdx[h] = i; });
     
-    const requiredCols = ['Region', 'Aon Code', 'CIQ Level', 'Range Start', 'Range Mid', 'Range End'];
+    const requiredCols = ['Region', 'Aon Code (base)', 'CIQ Level', 'Range Start', 'Range Mid', 'Range End'];
     const missing = requiredCols.filter(c => colIdx[c] === undefined);
     if (missing.length > 0) {
       ui.alert('❌ Error', `Missing columns in Full List: ${missing.join(', ')}`, ui.ButtonSet.OK);
@@ -6819,7 +6830,7 @@ function reviewRangeProgression() {
     for (let i = 1; i < data.length; i++) {
       const row = data[i];
       const region = row[colIdx['Region']];
-      const aonCode = row[colIdx['Aon Code']];
+      const aonCode = row[colIdx['Aon Code (base)']];
       const level = row[colIdx['CIQ Level']];
       const rangeStart = row[colIdx['Range Start']];
       const rangeMid = row[colIdx['Range Mid']];
@@ -7115,7 +7126,7 @@ function applyRangeCorrections() {
     for (let i = 1; i < fullListData.length; i++) {
       const row = fullListData[i];
       const region = row[fullListColIdx['Region']];
-      const aonCode = row[fullListColIdx['Aon Code']];
+      const aonCode = row[fullListColIdx['Aon Code (base)']];
       const aonBase = aonCode ? aonCode.replace(/\.[PR]\d+$/, '') : '';
       const level = row[fullListColIdx['CIQ Level']];
       
@@ -7146,7 +7157,7 @@ function applyRangeCorrections() {
         for (let i = 1; i < fullListData.length; i++) {
           const row = fullListData[i];
           const region = row[fullListColIdx['Region']];
-          const aonCode = row[fullListColIdx['Aon Code']];
+          const aonCode = row[fullListColIdx['Aon Code (base)']];
           const aonBase = aonCode ? aonCode.replace(/\.[PR]\d+$/, '') : '';
           const level = row[fullListColIdx['CIQ Level']];
           const fxRate = parseFloat(row[fxCol]) || 1;
