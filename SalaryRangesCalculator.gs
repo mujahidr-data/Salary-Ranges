@@ -14,7 +14,7 @@
  * - Persistent legacy mapping storage
  * - Interactive calculator UI
  * 
- * @version 4.26.1
+ * @version 4.27.0
  * @date 2025-11-28
  * @performance Highly optimized with strategic caching and batch operations:
  *   - Pre-loaded Aon data: Saves 10,080+ sheet reads (~95% faster market data build)
@@ -25,7 +25,16 @@
  *   - Legacy mappings batch load: Saves 600+ lookups (~90% faster mapping resolution)
  *   - Pre-indexed CR groups: ~98% faster CR calculations (Map-based grouping)
  *   - Reduced sleep timers: 500ms→300ms, 1000ms→500ms (~40% faster workflows)
- * @changelog v4.26.1 - BUGFIX: Range Progression Review "Missing columns" error
+ * @changelog v4.27.0 - UX IMPROVEMENT: Hide zeros in Emp Count column on calculators
+ *   - USER REQUEST: "add formatting so that 0 are hidden for emp count similar to how other rows without data are blank"
+ *   - PROBLEM: Emp Count column showed "0" for levels with no employees, cluttering the view
+ *   - SOLUTION: Applied number format "0;-0;;@" to hide zeros (shows blank instead)
+ *   - APPLIED TO:
+ *     1. Engineering and Product (X0) calculator - via applyCurrency_() function
+ *     2. Everyone Else (Y1) calculator - via buildCalculatorUIForY1_() function
+ *   - RESULT: Cleaner calculator view - only levels with employees show counts
+ *   - ACTION: Run "Rebuild Calculator Formulas" to apply formatting to existing sheets
+ * @previous v4.26.1 - BUGFIX: Range Progression Review "Missing columns" error
  *   - USER REPORT: "error during range progression" with error "Missing columns in Full List: Aon Code"
  *   - ROOT CAUSE: Column name mismatch between Full List schema and Range Progression functions:
  *     • Full List uses: "Aon Code (base)" ✓
@@ -1357,6 +1366,11 @@ function applyCurrency_() {
       formattedCount++;
     }
   });
+  
+  // Format Emp Count column to hide zeros (show blank instead)
+  if (cEmp > 0) {
+    _setFmtIfNeeded_(sh.getRange(headerRow+1, cEmp, lastRow - headerRow, 1), '0;-0;;@');
+  }
   if (cEmp > 0) {
     maybeFormatCol(cEmp, '0;0;;@');
     formattedCount++;
@@ -4416,7 +4430,7 @@ function buildCalculatorUIForY1_() {
   // Format
   sh.getRange(8,2,levels.length,3).setNumberFormat('$#,##0');
   sh.getRange(8,6,levels.length,3).setNumberFormat('$#,##0');
-  sh.getRange(8,9,levels.length,1).setNumberFormat('0');
+  sh.getRange(8,9,levels.length,1).setNumberFormat('0;-0;;@'); // Hide zeros - show blank instead
 }
 
 /**
