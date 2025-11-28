@@ -5291,7 +5291,6 @@ function _preIndexEmployeesForCR_() {
     Logger.log(`===\n`);
   } else {
     Logger.log(`⚠️ WARNING: empIndex is EMPTY - no employees indexed for CR calculations!`);
-    Logger.log(`⚠️ This means CR columns will be blank in Full List`);
     Logger.log(`⚠️ Check: Are employees marked as Approved or Needs Review in Employees Mapped?`);
   }
   
@@ -5350,15 +5349,46 @@ function rebuildFullListAllCombinations_() {
       for (const ciqLevel of levels) {
         totalCombinations++;
         // OPTIMIZED: Get market percentiles from pre-loaded cache (instant lookup!)
-        const aonKey = `${region}|${aonCode}|${ciqLevel}`;
-        const percentiles = aonCache.get(aonKey) || {};
-        const p10 = percentiles.p10 || '';
-        const p25 = percentiles.p25 || '';
-        const p40 = percentiles.p40 || '';
-        const p50 = percentiles.p50 || '';
-        const p625 = percentiles.p625 || '';
-        const p75 = percentiles.p75 || '';
-        const p90 = percentiles.p90 || '';
+        let p10 = '', p25 = '', p40 = '', p50 = '', p625 = '', p75 = '', p90 = '';
+        
+        // Check if this is a .5 level (needs averaging)
+        if (ciqLevel.includes('.5')) {
+          // For .5 levels, average the preceding and succeeding levels
+          const match = ciqLevel.match(/^L([\d.]+)\s+(IC|Mgr)$/i);
+          if (match) {
+            const levelNum = parseFloat(match[1]);
+            const role = match[2];
+            const precedingLevel = `L${Math.floor(levelNum)} ${role}`;
+            const succeedingLevel = `L${Math.ceil(levelNum)} ${role}`;
+            
+            const precedingKey = `${region}|${aonCode}|${precedingLevel}`;
+            const succeedingKey = `${region}|${aonCode}|${succeedingLevel}`;
+            const precedingData = aonCache.get(precedingKey) || {};
+            const succeedingData = aonCache.get(succeedingKey) || {};
+            
+            // Only calculate if BOTH surrounding levels have data
+            if (precedingData.p25 && succeedingData.p25) {
+              p10 = precedingData.p10 && succeedingData.p10 ? Math.round((toNumber(precedingData.p10) + toNumber(succeedingData.p10)) / 2) : '';
+              p25 = Math.round((toNumber(precedingData.p25) + toNumber(succeedingData.p25)) / 2);
+              p40 = precedingData.p40 && succeedingData.p40 ? Math.round((toNumber(precedingData.p40) + toNumber(succeedingData.p40)) / 2) : '';
+              p50 = precedingData.p50 && succeedingData.p50 ? Math.round((toNumber(precedingData.p50) + toNumber(succeedingData.p50)) / 2) : '';
+              p625 = precedingData.p625 && succeedingData.p625 ? Math.round((toNumber(precedingData.p625) + toNumber(succeedingData.p625)) / 2) : '';
+              p75 = precedingData.p75 && succeedingData.p75 ? Math.round((toNumber(precedingData.p75) + toNumber(succeedingData.p75)) / 2) : '';
+              p90 = precedingData.p90 && succeedingData.p90 ? Math.round((toNumber(precedingData.p90) + toNumber(succeedingData.p90)) / 2) : '';
+            }
+          }
+        } else {
+          // Regular level - direct lookup
+          const aonKey = `${region}|${aonCode}|${ciqLevel}`;
+          const percentiles = aonCache.get(aonKey) || {};
+          p10 = percentiles.p10 || '';
+          p25 = percentiles.p25 || '';
+          p40 = percentiles.p40 || '';
+          p50 = percentiles.p50 || '';
+          p625 = percentiles.p625 || '';
+          p75 = percentiles.p75 || '';
+          p90 = percentiles.p90 || '';
+        }
         
         // Get internal stats (if employees exist)
         // NOTE: _buildInternalIndex_() normalizes "US" to "USA", so we need to match that
@@ -5421,19 +5451,9 @@ function rebuildFullListAllCombinations_() {
         const empGroup = empIndex.get(empKey);
         let crStats = { avgCR: '', ttCR: '', newHireCR: '', btCR: '' };
         
-        // Log first 10 CR lookups for debugging (especially those with employees)
-        if (totalCombinations <= 10) {
-          const found = empIndex.has(empKey);
-          Logger.log(`[CR Lookup ${totalCombinations}] Region:${region}, AonCode:${aonCode}, Level:${ciqLevel} → FullCode:${fullAonCode}`);
-          Logger.log(`  Key: "${empKey}", Found: ${found}, RangeMid: ${rangeMid}`);
-          if (found && empGroup) {
-            Logger.log(`  Employees: ${empGroup.salaries.length} total (TT:${empGroup.ttSalaries.length}, BT:${empGroup.btSalaries.length}, NH:${empGroup.nhSalaries.length})`);
-            if (empGroup.salaries.length > 0 && rangeMid > 0) {
-              const avgTotal = empGroup.salaries.reduce((sum, sal) => sum + sal / rangeMid, 0);
-              const avgCR = (avgTotal / empGroup.salaries.length).toFixed(2);
-              Logger.log(`  Calculated Avg CR: ${avgCR}`);
-            }
-          }
+        // Log first 5 CR lookups for debugging
+        if (totalCombinations <= 5 && empIndex.has(empKey) && empGroup) {
+          Logger.log(`[CR Lookup ${totalCombinations}] ${region}|${aonCode}|${ciqLevel} → employees: ${empGroup.salaries.length}, rangeMid: ${rangeMid}`);
         }
         
         if (empGroup && rangeMid && rangeMid > 0) {
