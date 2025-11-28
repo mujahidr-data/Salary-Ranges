@@ -4160,6 +4160,18 @@ function syncEmployeesMappedSheet_() {
   const iActive = baseHead.findIndex(h => /Active.*Inactive|Status/i.test(h));
   const iTerm = baseHead.findIndex(h => /Termination.*date|Term.*date|End.*date|Leave.*date/i.test(h));
   
+  // DEBUG: Log column detection
+  Logger.log(`\n=== BASE DATA COLUMN DETECTION ===`);
+  Logger.log(`Total columns in Base Data: ${baseHead.length}`);
+  Logger.log(`Column C (index 2): "${baseHead[2]}"`);
+  Logger.log(`Start Date column detected at index: ${iStart} (Column ${String.fromCharCode(65 + iStart)})`);
+  if (iStart >= 0) {
+    Logger.log(`Start Date header: "${baseHead[iStart]}"`);
+  } else {
+    Logger.log(`⚠️ Start Date column NOT detected! Headers: ${baseHead.slice(0, 10).join(', ')}`);
+  }
+  Logger.log(`===\n`);
+  
   if (iEmpID < 0) {
     SpreadsheetApp.getActive().toast('Employee ID column not found in Base Data', 'Error', 5);
     return;
@@ -4296,6 +4308,11 @@ function syncEmployeesMappedSheet_() {
     const jobLevelFromBob = iJobLevel >= 0 ? String(row[iJobLevel] || '').trim() : '';
     const salary = iSalary >= 0 ? row[iSalary] : '';
     const startDate = iStart >= 0 ? row[iStart] : '';
+    
+    // DEBUG: Log first 5 employees' start date data
+    if (r <= 6) {
+      Logger.log(`Employee ${r-1}: EmpID=${empID}, Name=${name}, StartDate=${startDate} (type: ${typeof startDate}, value: ${startDate})`);
+    }
     
     let aonCode = '', ciqLevel = '', confidence = '', source = '', status = 'Needs Review';
     let jobFamilyDesc = '';
@@ -4566,6 +4583,20 @@ function syncEmployeesMappedSheet_() {
   const recentPromotionCount = rows.filter(row => row[15] && row[15].length > 0).length; // Column P (index 15)
   const missingDataRows = rows.filter(row => row[18] && row[18].length > 0);
   const marketDataMissingCount = missingDataRows.length; // Column S (index 18)
+  
+  // DEBUG: Check for missing start dates
+  const missingStartDateRows = rows.filter(row => !row[14]); // Column O (index 14)
+  Logger.log(`\n=== START DATE SUMMARY ===`);
+  Logger.log(`Total employees processed: ${rows.length}`);
+  Logger.log(`Employees with start dates: ${rows.length - missingStartDateRows.length}`);
+  Logger.log(`Employees WITHOUT start dates: ${missingStartDateRows.length}`);
+  if (missingStartDateRows.length > 0 && missingStartDateRows.length <= 10) {
+    Logger.log(`Missing start dates for:`);
+    missingStartDateRows.forEach((row, idx) => {
+      Logger.log(`  ${idx + 1}. EmpID=${row[0]}, Name=${row[1]}`);
+    });
+  }
+  Logger.log(`===\n`);
   
   // Log first 10 market data missing cases for debugging
   Logger.log(`\n=== MARKET DATA MISSING DETAILS ===`);
