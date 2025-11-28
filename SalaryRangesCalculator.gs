@@ -6264,12 +6264,18 @@ function reviewRangeProgression() {
   }
   
   // Define level order for sorting
+  // IC Track: L2 IC (starting) → L3 IC → ... → L6.5 IC → L7 IC
+  // Mgr Track: L4 Mgr (starting) → L5 Mgr → ... → L6.5 Mgr → L7 Mgr (E1) → L8 Mgr (E3) → L9 Mgr (E5) → L10 Mgr (E6)
   const levelOrder = {
+    // IC Track (starting role: L2 IC)
     'L2 IC': 2, 'L3 IC': 3, 'L4 IC': 4, 'L5 IC': 5, 'L5.5 IC': 5.5, 'L6 IC': 6, 'L6.5 IC': 6.5, 'L7 IC': 7,
-    'L4 Mgr': 14, 'L5 Mgr': 15, 'L5.5 Mgr': 15.5, 'L6 Mgr': 16, 'L6.5 Mgr': 16.5, 'L7 Mgr': 17, 'L8 Mgr': 18, 'L9 Mgr': 19
+    // Manager Track (starting role: L4 Mgr)
+    'L4 Mgr': 14, 'L5 Mgr': 15, 'L5.5 Mgr': 15.5, 'L6 Mgr': 16, 'L6.5 Mgr': 16.5, 
+    'L7 Mgr': 17, 'L8 Mgr': 18, 'L9 Mgr': 19, 'L10 Mgr': 20, 'L10+ Mgr': 20
   };
   
-  // Group by Region + Aon Code base (without .PX or .RX suffix)
+  // Group by Region + Aon Code + Track (IC vs Mgr)
+  // This ensures IC and Mgr progressions are checked separately
   const groups = new Map();
   
   for (let i = 1; i < data.length; i++) {
@@ -6284,7 +6290,11 @@ function reviewRangeProgression() {
     // Skip if no range data
     if (!rangeStart && !rangeMid && !rangeEnd) continue;
     
-    const groupKey = `${region}|${aonCode}`;
+    // Determine track (IC or Mgr)
+    const track = level.includes('IC') ? 'IC' : 'Mgr';
+    
+    // Group by Region + Aon Code + Track to keep IC and Mgr separate
+    const groupKey = `${region}|${aonCode}|${track}`;
     
     if (!groups.has(groupKey)) {
       groups.set(groupKey, []);
@@ -6294,6 +6304,7 @@ function reviewRangeProgression() {
       region,
       aonCode,
       level,
+      track,
       levelOrder: levelOrder[level] || 999,
       rangeStart: parseFloat(rangeStart) || 0,
       rangeMid: parseFloat(rangeMid) || 0,
@@ -6308,8 +6319,19 @@ function reviewRangeProgression() {
   const issues = [];
   
   for (const [groupKey, rows] of groups.entries()) {
-    // Sort by level order
+    // Sort by level order (automatically separates IC and Mgr tracks)
     rows.sort((a, b) => a.levelOrder - b.levelOrder);
+    
+    // PROGRESSION RULES (per user specification):
+    // IC Track: L2 IC (baseline) → L3 → L4 → L5 → L5.5 → L6 → L6.5 → L7 (E1)
+    //   - Each level must be >= previous level
+    //   - L3 cannot be higher than L4, L4 cannot be higher than L5, etc.
+    //   - P6 (L6 IC) cannot be higher than E1 (L7 IC)
+    //
+    // Mgr Track: L4 Mgr (baseline) → L5 → L5.5 → L6 → L6.5 → L7 (E1) → E3 → E5 → E6
+    //   - Each level must be >= previous level
+    //   - M6 (L6 Mgr) cannot be higher than E1 (L7 Mgr)
+    //   - E1 cannot be higher than E3, E3 cannot be higher than E5, etc.
     
     // Check progression for each metric
     for (let i = 1; i < rows.length; i++) {
