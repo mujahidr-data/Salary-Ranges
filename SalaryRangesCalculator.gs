@@ -14,7 +14,7 @@
  * - Persistent legacy mapping storage
  * - Interactive calculator UI
  * 
- * @version 4.27.0
+ * @version 4.28.0
  * @date 2025-11-28
  * @performance Highly optimized with strategic caching and batch operations:
  *   - Pre-loaded Aon data: Saves 10,080+ sheet reads (~95% faster market data build)
@@ -25,7 +25,28 @@
  *   - Legacy mappings batch load: Saves 600+ lookups (~90% faster mapping resolution)
  *   - Pre-indexed CR groups: ~98% faster CR calculations (Map-based grouping)
  *   - Reduced sleep timers: 500ms→300ms, 1000ms→500ms (~40% faster workflows)
- * @changelog v4.27.0 - UX IMPROVEMENT: Hide zeros in Emp Count column on calculators
+ * @changelog v4.28.0 - CRITICAL FIX: Avg CR not populating despite having employees
+ *   - USER REPORT: "why is avg cr not being created for these even though there are employees"
+ *   - PROBLEM: Full List showed Emp Count (1, 2, 15...) but Avg CR was blank
+ *   - ROOT CAUSE: Key format mismatch between internal stats and CR calculations:
+ *     • Internal stats (_buildInternalIndex_): `${region}|${aonCode}|${level}` ✓
+ *       Example: "USA|EN.SODE|L5 IC"
+ *     • CR calculation (_preIndexEmployeesForCR_): `${site}|${execDesc}|${level}` ❌
+ *       Example: "US|Engineering - Software Development|L5 IC"
+ *     • Full List lookup: `${region}|${execDesc}|${ciqLevel}` ❌
+ *       Looked for description, but CR index used description, internal used code!
+ *   - RESULT: Keys never matched → CR lookups always returned empty
+ *   - THE FIX (Lines 5753-5759):
+ *     • Changed _preIndexEmployeesForCR_() to use aonCode directly (not execDesc)
+ *     • Changed Full List lookup (line 6002) to use aonCode (not execDesc)
+ *     • Now both use: `${region}|${aonCode}|${level}` ✓
+ *   - ADDED DEBUGGING:
+ *     • Log first 5 CR index keys with employee counts
+ *     • Log first 5 CR lookups showing if key found + employee count
+ *     • Summary: "X out of Y combinations have Avg CR values"
+ *   - IMPACT: Avg CR, TT CR, New Hire CR, BT CR will now populate correctly!
+ *   - ACTION: User must run "Build Market Data" to regenerate with correct keys
+ * @previous v4.27.0 - UX IMPROVEMENT: Hide zeros in Emp Count column on calculators
  *   - USER REQUEST: "add formatting so that 0 are hidden for emp count similar to how other rows without data are blank"
  *   - PROBLEM: Emp Count column showed "0" for levels with no employees, cluttering the view
  *   - SOLUTION: Applied number format "0;-0;;@" to hide zeros (shows blank instead)
@@ -5752,10 +5773,13 @@ function _preIndexEmployeesForCR_() {
     // Only include Approved or Legacy status for CR calculations
     if ((status !== 'Approved' && status !== 'Legacy') || !salary || isNaN(salary) || salary <= 0) return;
     
-    const empFamily = execMap.get(aonCode) || '';
-    if (!empFamily) return;
+    // Skip if no Aon Code
+    if (!aonCode) return;
     
-    const key = `${empSite}|${empFamily}|${empLevel}`;
+    // CRITICAL: Use aonCode directly (not description) to match internal stats key format
+    // Internal stats uses: ${site}|${aonCode}|${level}
+    // CR must use same format for Full List lookup to work!
+    const key = `${empSite}|${aonCode}|${empLevel}`;
     
     if (!empIndex.has(key)) {
       empIndex.set(key, {
@@ -5802,6 +5826,15 @@ function _preIndexEmployeesForCR_() {
   Logger.log(`Pre-indexed ${empIndex.size} employee groups for CR calculations`);
   Logger.log(`Skipped ${skippedInactive} inactive employees (same filter as internal stats)`);
   Logger.log(`New Hire CR: Found ${totalNewHires} total employees hired in last 365 days (cutoff: ${cutoffDate.toISOString().split('T')[0]})`);
+  
+  // Log first 5 keys for debugging
+  let keyCount = 0;
+  empIndex.forEach((group, key) => {
+    if (keyCount < 5) {
+      Logger.log(`CR Index sample ${keyCount + 1}: "${key}" has ${group.salaries.length} employees`);
+      keyCount++;
+    }
+  });
   
   return empIndex;
 }
@@ -5996,9 +6029,18 @@ function rebuildFullListAllCombinations_() {
         }
         
         // OPTIMIZED: Calculate CR values from pre-indexed employee groups (instant lookup!)
-        const empKey = `${region}|${execDesc}|${ciqLevel}`;
+        // CRITICAL: Use aonCode (not execDesc) to match _preIndexEmployeesForCR_() key format
+        // Both internal stats and CR use: ${region}|${aonCode}|${level}
+        const empKey = `${region}|${aonCode}|${ciqLevel}`;
         const empGroup = empIndex.get(empKey);
         let crStats = { avgCR: '', ttCR: '', newHireCR: '', btCR: '' };
+        
+        // Log first 5 CR lookups for debugging
+        if (totalCombinations <= 5) {
+          const found = empIndex.has(empKey);
+          const empCount = empGroup ? empGroup.salaries.length : 0;
+          Logger.log(`CR Lookup ${totalCombinations}: key="${empKey}" found=${found} employees=${empCount} intStats=${intStats.n}`);
+        }
         
         if (empGroup && rangeMid && rangeMid > 0) {
           // Avg CR (all approved employees)
@@ -6081,7 +6123,14 @@ function rebuildFullListAllCombinations_() {
   // Clear cache
   CacheService.getDocumentCache().removeAll(['MAP:FULL_LIST']);
   
+  // Count combinations with CR data
+  let combinationsWithCR = 0;
+  rows.forEach(row => {
+    if (row[20]) combinationsWithCR++; // Column U = Avg CR (index 20)
+  });
+  
   Logger.log(`Internal stats summary: ${combinationsWithInternalData} out of ${totalCombinations} combinations have employee data`);
+  Logger.log(`CR calculations summary: ${combinationsWithCR} out of ${totalCombinations} combinations have Avg CR values`);
   
   const msg = `✅ Generated ${rows.length} combinations for ${familiesX0Y1.length} families\n⚡ Optimized: 90% faster (v4.6.0)\n📊 Internal stats: ${combinationsWithInternalData}/${totalCombinations}`;
   SpreadsheetApp.getActive().toast(msg, 'Full List Complete', 5);
