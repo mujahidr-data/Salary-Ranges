@@ -5175,6 +5175,9 @@ function _preIndexEmployeesForCR_() {
   
   let processedCount = 0;
   let skippedInactive = 0;
+  let skippedStatus = 0;
+  let skippedNoSalary = 0;
+  let skippedNoFullCode = 0;
   let newHireDebugCount = 0;
   
   empVals.forEach(row => {
@@ -5197,11 +5200,23 @@ function _preIndexEmployeesForCR_() {
       return;
     }
     
-    // Skip if status is not Approved or Legacy
-    if ((status !== 'Approved' && status !== 'Legacy') || !salary || isNaN(salary) || salary <= 0) return;
+    // Skip if status is not Approved or Needs Review
+    if (status !== 'Approved' && status !== 'Needs Review') {
+      skippedStatus++;
+      return;
+    }
+    
+    // Skip if no salary
+    if (!salary || isNaN(salary) || salary <= 0) {
+      skippedNoSalary++;
+      return;
+    }
     
     // Skip if no Full Aon Code
-    if (!fullAonCode) return;
+    if (!fullAonCode) {
+      skippedNoFullCode++;
+      return;
+    }
     
     // Normalize region (US → USA for consistency with internal stats)
     const normSite = empSite === 'US' ? 'USA' : (empSite === 'USA' ? 'USA' : (empSite === 'India' ? 'India' : (empSite === 'UK' ? 'UK' : empSite)));
@@ -5253,9 +5268,32 @@ function _preIndexEmployeesForCR_() {
     totalNewHires += group.nhSalaries.length;
   });
   
+  Logger.log(`\n=== CR INDEX SUMMARY ===`);
   Logger.log(`Pre-indexed ${empIndex.size} employee groups for CR calculations`);
-  Logger.log(`Skipped ${skippedInactive} inactive employees (same filter as internal stats)`);
+  Logger.log(`Processed ${processedCount} employees with valid data`);
+  Logger.log(`Skipped breakdown:`);
+  Logger.log(`  - Inactive: ${skippedInactive}`);
+  Logger.log(`  - Wrong status (not Approved/Needs Review): ${skippedStatus}`);
+  Logger.log(`  - No salary: ${skippedNoSalary}`);
+  Logger.log(`  - No Full Aon Code: ${skippedNoFullCode}`);
   Logger.log(`New Hire CR: Found ${totalNewHires} total employees hired in last 365 days (cutoff: ${cutoffDate.toISOString().split('T')[0]})`);
+  
+  // Sample 5 keys from empIndex for debugging
+  if (empIndex.size > 0) {
+    Logger.log(`\n=== SAMPLE CR KEYS ===`);
+    let sampleCount = 0;
+    empIndex.forEach((group, key) => {
+      if (sampleCount < 5) {
+        Logger.log(`Key: "${key}" → ${group.salaries.length} employees (TT:${group.ttSalaries.length}, BT:${group.btSalaries.length}, NH:${group.nhSalaries.length})`);
+        sampleCount++;
+      }
+    });
+    Logger.log(`===\n`);
+  } else {
+    Logger.log(`⚠️ WARNING: empIndex is EMPTY - no employees indexed for CR calculations!`);
+    Logger.log(`⚠️ This means CR columns will be blank in Full List`);
+    Logger.log(`⚠️ Check: Are employees marked as Approved or Needs Review in Employees Mapped?`);
+  }
   
   return empIndex;
 }
@@ -5383,13 +5421,18 @@ function rebuildFullListAllCombinations_() {
         const empGroup = empIndex.get(empKey);
         let crStats = { avgCR: '', ttCR: '', newHireCR: '', btCR: '' };
         
-        // Log first 5 CR lookups for debugging
-        if (totalCombinations <= 5) {
+        // Log first 10 CR lookups for debugging (especially those with employees)
+        if (totalCombinations <= 10) {
           const found = empIndex.has(empKey);
+          Logger.log(`[CR Lookup ${totalCombinations}] Region:${region}, AonCode:${aonCode}, Level:${ciqLevel} → FullCode:${fullAonCode}`);
+          Logger.log(`  Key: "${empKey}", Found: ${found}, RangeMid: ${rangeMid}`);
           if (found && empGroup) {
-            Logger.log(`CR Lookup ${totalCombinations}: key="${empKey}" found=true salaries:${empGroup.salaries.length}, TT:${empGroup.ttSalaries.length}, BT:${empGroup.btSalaries.length}, NH:${empGroup.nhSalaries.length}`);
-          } else {
-            Logger.log(`CR Lookup ${totalCombinations}: key="${empKey}" found=false`);
+            Logger.log(`  Employees: ${empGroup.salaries.length} total (TT:${empGroup.ttSalaries.length}, BT:${empGroup.btSalaries.length}, NH:${empGroup.nhSalaries.length})`);
+            if (empGroup.salaries.length > 0 && rangeMid > 0) {
+              const avgTotal = empGroup.salaries.reduce((sum, sal) => sum + sal / rangeMid, 0);
+              const avgCR = (avgTotal / empGroup.salaries.length).toFixed(2);
+              Logger.log(`  Calculated Avg CR: ${avgCR}`);
+            }
           }
         }
         
