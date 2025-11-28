@@ -1682,16 +1682,6 @@ function buildFullListUsd_() {
   SpreadsheetApp.getActive().toast('✅ Full List USD built\n⚡ Optimized (v4.6.0)', 'Complete', 5);
 }
 
-function exportProposedSalaryRanges_() {
-  const ui = SpreadsheetApp.getUi();
-  const resp = ui.prompt('Export Proposed Salary Ranges', 'Enter category (X0 or Y1). Default X0:', ui.ButtonSet.OK_CANCEL);
-  if (resp.getSelectedButton() !== ui.Button.OK) return;
-  const category = String(resp.getResponseText() || 'X0').trim().toUpperCase();
-  if (!/^(X0|Y1)$/.test(category)) { ui.alert('Invalid category. Use X0 or Y1.'); return; }
-  // For brevity, reuse Full List logic then map columns per category. Users can use Full List for calculators; export remains optional.
-  rebuildFullListTabs_(); ui.alert('Use the Full List sheet for calculators; export file creation trimmed in merged build.');
-}
-
 function buildHelpSheet_() {
   const ss = SpreadsheetApp.getActive();
   const sh = ss.getSheetByName('About & Help') || ss.insertSheet('About & Help');
@@ -5863,7 +5853,9 @@ function onOpen() {
     .addItem('⏰ Import Bob Data (Headless)', 'importBobDataHeadless')
     .addItem('🔔 Setup Daily Import Trigger', 'setupDailyImportTrigger')
     .addSeparator()
-    .addItem('📤 Export Proposed Ranges', 'exportProposedSalaryRanges_')
+    .addItem('🔍 Review Range Progression', 'reviewRangeProgression')
+    .addItem('✅ Apply Range Corrections', 'applyRangeCorrections')
+    .addSeparator()
     .addItem('🔄 Rebuild Lookup Sheet', 'createLookupSheet_')
     .addItem('🎨 Rebuild Calculator UIs', 'rebuildBothCalculatorUIs')
     .addSeparator()
@@ -6086,4 +6078,411 @@ function showInstructions() {
     .setWidth(600)
     .setHeight(600);
   ui.showModalDialog(html, 'Salary Ranges Calculator - Instructions');
+}
+
+// ================================
+// RANGE PROGRESSION QA SYSTEM
+// ================================
+
+/**
+ * Analyzes Full List to ensure salary ranges increase consistently across levels
+ * Creates "Range Progression Issues" sheet for review
+ */
+function reviewRangeProgression() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+  
+  const response = ui.alert('🔍 Range Progression Review', 
+    'This will analyze Full List for salary ranges that decrease or stay flat as levels increase.\n\n' +
+    'Violations will be flagged in a new "Range Progression Issues" sheet for your review.\n\n' +
+    'Click OK to start...', 
+    ui.ButtonSet.OK_CANCEL);
+  
+  if (response === ui.Button.CANCEL) return;
+  
+  SpreadsheetApp.getActive().toast('Reading Full List...', '🔍 Range Progression Review', -1);
+  
+  // Read Full List
+  const fullListSheet = ss.getSheetByName('Full List');
+  if (!fullListSheet) {
+    ui.alert('❌ Error', 'Full List sheet not found. Please run "Build Market Data" first.', ui.ButtonSet.OK);
+    return;
+  }
+  
+  const data = fullListSheet.getDataRange().getValues();
+  const headers = data[0];
+  
+  // Find column indices
+  const colIdx = {};
+  headers.forEach((h, i) => { colIdx[h] = i; });
+  
+  const requiredCols = ['Region', 'Aon Code', 'CIQ Level', 'Range Start', 'Range Mid', 'Range End'];
+  const missing = requiredCols.filter(c => colIdx[c] === undefined);
+  if (missing.length > 0) {
+    ui.alert('❌ Error', `Missing columns in Full List: ${missing.join(', ')}`, ui.ButtonSet.OK);
+    return;
+  }
+  
+  // Define level order for sorting
+  const levelOrder = {
+    'L2 IC': 2, 'L3 IC': 3, 'L4 IC': 4, 'L5 IC': 5, 'L5.5 IC': 5.5, 'L6 IC': 6, 'L6.5 IC': 6.5, 'L7 IC': 7,
+    'L4 Mgr': 14, 'L5 Mgr': 15, 'L5.5 Mgr': 15.5, 'L6 Mgr': 16, 'L6.5 Mgr': 16.5, 'L7 Mgr': 17, 'L8 Mgr': 18, 'L9 Mgr': 19
+  };
+  
+  // Group by Region + Aon Code base (without .PX or .RX suffix)
+  const groups = new Map();
+  
+  for (let i = 1; i < data.length; i++) {
+    const row = data[i];
+    const region = row[colIdx['Region']];
+    const aonCode = row[colIdx['Aon Code']];
+    const level = row[colIdx['CIQ Level']];
+    const rangeStart = row[colIdx['Range Start']];
+    const rangeMid = row[colIdx['Range Mid']];
+    const rangeEnd = row[colIdx['Range End']];
+    
+    // Skip if no range data
+    if (!rangeStart && !rangeMid && !rangeEnd) continue;
+    
+    const groupKey = `${region}|${aonCode}`;
+    
+    if (!groups.has(groupKey)) {
+      groups.set(groupKey, []);
+    }
+    
+    groups.get(groupKey).push({
+      region,
+      aonCode,
+      level,
+      levelOrder: levelOrder[level] || 999,
+      rangeStart: parseFloat(rangeStart) || 0,
+      rangeMid: parseFloat(rangeMid) || 0,
+      rangeEnd: parseFloat(rangeEnd) || 0,
+      rowIndex: i + 1  // 1-based for sheet reference
+    });
+  }
+  
+  SpreadsheetApp.getActive().toast(`Analyzing ${groups.size} job family/region combinations...`, '🔍 Range Progression Review', 3);
+  
+  // Analyze each group for violations
+  const issues = [];
+  
+  for (const [groupKey, rows] of groups.entries()) {
+    // Sort by level order
+    rows.sort((a, b) => a.levelOrder - b.levelOrder);
+    
+    // Check progression for each metric
+    for (let i = 1; i < rows.length; i++) {
+      const prev = rows[i - 1];
+      const curr = rows[i];
+      
+      // Skip if either level has no data
+      if (!prev.rangeStart && !prev.rangeMid && !prev.rangeEnd) continue;
+      if (!curr.rangeStart && !curr.rangeMid && !curr.rangeEnd) continue;
+      
+      // Check Range Start
+      if (prev.rangeStart > 0 && curr.rangeStart > 0 && curr.rangeStart <= prev.rangeStart) {
+        issues.push({
+          region: curr.region,
+          jobFamily: curr.aonCode,
+          level: curr.level,
+          metric: 'Range Start',
+          currentValue: curr.rangeStart,
+          previousLevel: prev.level,
+          previousValue: prev.rangeStart,
+          issue: `${curr.level} (${formatNumber(curr.rangeStart)}) ≤ ${prev.level} (${formatNumber(prev.rangeStart)})`,
+          recommended: Math.ceil(prev.rangeStart * 1.15),  // Suggest 15% increase
+          status: 'Pending'
+        });
+      }
+      
+      // Check Range Mid
+      if (prev.rangeMid > 0 && curr.rangeMid > 0 && curr.rangeMid <= prev.rangeMid) {
+        issues.push({
+          region: curr.region,
+          jobFamily: curr.aonCode,
+          level: curr.level,
+          metric: 'Range Mid',
+          currentValue: curr.rangeMid,
+          previousLevel: prev.level,
+          previousValue: prev.rangeMid,
+          issue: `${curr.level} (${formatNumber(curr.rangeMid)}) ≤ ${prev.level} (${formatNumber(prev.rangeMid)})`,
+          recommended: Math.ceil(prev.rangeMid * 1.15),  // Suggest 15% increase
+          status: 'Pending'
+        });
+      }
+      
+      // Check Range End
+      if (prev.rangeEnd > 0 && curr.rangeEnd > 0 && curr.rangeEnd <= prev.rangeEnd) {
+        issues.push({
+          region: curr.region,
+          jobFamily: curr.aonCode,
+          level: curr.level,
+          metric: 'Range End',
+          currentValue: curr.rangeEnd,
+          previousLevel: prev.level,
+          previousValue: prev.rangeEnd,
+          issue: `${curr.level} (${formatNumber(curr.rangeEnd)}) ≤ ${prev.level} (${formatNumber(prev.rangeEnd)})`,
+          recommended: Math.ceil(prev.rangeEnd * 1.15),  // Suggest 15% increase
+          status: 'Pending'
+        });
+      }
+    }
+  }
+  
+  // Create or update Range Progression Issues sheet
+  SpreadsheetApp.getActive().toast('Creating Range Progression Issues sheet...', '🔍 Range Progression Review', 3);
+  
+  let issuesSheet = ss.getSheetByName('Range Progression Issues');
+  if (!issuesSheet) {
+    issuesSheet = ss.insertSheet('Range Progression Issues');
+  } else {
+    issuesSheet.clear();
+  }
+  
+  // Write headers
+  const issueHeaders = [
+    'Region', 'Job Family', 'Level', 'Metric', 
+    'Current Value', 'Previous Level', 'Previous Value', 
+    'Issue Description', 'Recommended Value', 'Status'
+  ];
+  
+  issuesSheet.getRange(1, 1, 1, issueHeaders.length).setValues([issueHeaders])
+    .setFontWeight('bold')
+    .setBackground('#4285f4')
+    .setFontColor('white');
+  
+  // Write issues
+  if (issues.length > 0) {
+    const issueRows = issues.map(issue => [
+      issue.region,
+      issue.jobFamily,
+      issue.level,
+      issue.metric,
+      issue.currentValue,
+      issue.previousLevel,
+      issue.previousValue,
+      issue.issue,
+      issue.recommended,
+      issue.status
+    ]);
+    
+    issuesSheet.getRange(2, 1, issueRows.length, issueHeaders.length).setValues(issueRows);
+    
+    // Format numbers with currency
+    issuesSheet.getRange(2, 5, issueRows.length, 1).setNumberFormat('#,##0');  // Current Value
+    issuesSheet.getRange(2, 7, issueRows.length, 1).setNumberFormat('#,##0');  // Previous Value
+    issuesSheet.getRange(2, 9, issueRows.length, 1).setNumberFormat('#,##0');  // Recommended
+    
+    // Highlight issues (red background)
+    issuesSheet.getRange(2, 1, issueRows.length, issueHeaders.length).setBackground('#ffebee');
+    
+    // Add data validation for Status column (Pending/Approved/Rejected)
+    const statusRange = issuesSheet.getRange(2, 10, issueRows.length, 1);
+    const statusRule = SpreadsheetApp.newDataValidation()
+      .requireValueInList(['Pending', 'Approved', 'Rejected'], true)
+      .build();
+    statusRange.setDataValidation(statusRule);
+    
+    // Auto-resize columns
+    issuesSheet.autoResizeColumns(1, issueHeaders.length);
+    
+    // Freeze header row
+    issuesSheet.setFrozenRows(1);
+    
+    // Add instructions at the top
+    issuesSheet.insertRowBefore(1);
+    issuesSheet.getRange(1, 1, 1, issueHeaders.length).merge()
+      .setValue('📋 INSTRUCTIONS: Review each issue below. Edit "Recommended Value" if needed, then change "Status" to "Approved". Run "Apply Range Corrections" to update Full List.')
+      .setBackground('#fff3cd')
+      .setFontWeight('bold')
+      .setWrap(true);
+    issuesSheet.setRowHeight(1, 50);
+    
+    ui.alert('🔍 Range Progression Review Complete', 
+      `Found ${issues.length} range progression issue(s).\n\n` +
+      `These have been logged in the "Range Progression Issues" sheet.\n\n` +
+      `Next steps:\n` +
+      `1. Review each issue\n` +
+      `2. Edit "Recommended Value" if needed\n` +
+      `3. Change "Status" to "Approved" for issues you want to fix\n` +
+      `4. Run "Tools → Apply Range Corrections" to update Full List`,
+      ui.ButtonSet.OK);
+    
+    // Switch to issues sheet
+    ss.setActiveSheet(issuesSheet);
+    
+  } else {
+    issuesSheet.getRange(2, 1, 1, issueHeaders.length).setValues([
+      ['', '', '', '', '', '', '', '✅ No progression issues found!', '', '']
+    ]).setBackground('#d4edda').setFontWeight('bold');
+    
+    issuesSheet.autoResizeColumns(1, issueHeaders.length);
+    issuesSheet.setFrozenRows(1);
+    
+    ui.alert('✅ All Good!', 
+      'No range progression issues found.\n\n' +
+      'All salary ranges increase properly as levels go up.',
+      ui.ButtonSet.OK);
+  }
+}
+
+/**
+ * Helper function to format numbers with commas
+ */
+function formatNumber(num) {
+  if (!num) return '';
+  return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+/**
+ * Applies approved range corrections from "Range Progression Issues" back to Full List
+ */
+function applyRangeCorrections() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+  
+  // Check if Range Progression Issues sheet exists
+  const issuesSheet = ss.getSheetByName('Range Progression Issues');
+  if (!issuesSheet) {
+    ui.alert('❌ Error', 
+      'Range Progression Issues sheet not found.\n\n' +
+      'Please run "Tools → Review Range Progression" first.',
+      ui.ButtonSet.OK);
+    return;
+  }
+  
+  // Confirm with user
+  const response = ui.alert('✅ Apply Range Corrections', 
+    'This will apply all APPROVED corrections from "Range Progression Issues" to Full List and Full List USD.\n\n' +
+    'Only rows with Status = "Approved" will be updated.\n\n' +
+    'This action cannot be undone. Continue?', 
+    ui.ButtonSet.OK_CANCEL);
+  
+  if (response !== ui.Button.OK) return;
+  
+  SpreadsheetApp.getActive().toast('Reading approved corrections...', '✅ Apply Range Corrections', -1);
+  
+  // Read issues sheet
+  const issuesData = issuesSheet.getDataRange().getValues();
+  
+  // Find instruction row (first row is instructions)
+  let headerRow = 1;
+  if (issuesData[0][0] && issuesData[0][0].toString().includes('INSTRUCTIONS')) {
+    headerRow = 2;
+  }
+  
+  const issuesHeaders = issuesData[headerRow - 1];
+  const issuesColIdx = {};
+  issuesHeaders.forEach((h, i) => { issuesColIdx[h] = i; });
+  
+  // Find approved corrections
+  const approvedCorrections = [];
+  
+  for (let i = headerRow; i < issuesData.length; i++) {
+    const row = issuesData[i];
+    const status = row[issuesColIdx['Status']];
+    
+    if (status === 'Approved') {
+      approvedCorrections.push({
+        region: row[issuesColIdx['Region']],
+        jobFamily: row[issuesColIdx['Job Family']],
+        level: row[issuesColIdx['Level']],
+        metric: row[issuesColIdx['Metric']],
+        recommendedValue: parseFloat(row[issuesColIdx['Recommended Value']]) || 0,
+        issueRow: i + 1  // For marking as Applied
+      });
+    }
+  }
+  
+  if (approvedCorrections.length === 0) {
+    ui.alert('ℹ️ No Approved Corrections', 
+      'No corrections with Status = "Approved" found.\n\n' +
+      'Please review the Range Progression Issues sheet and set Status to "Approved" for corrections you want to apply.',
+      ui.ButtonSet.OK);
+    return;
+  }
+  
+  SpreadsheetApp.getActive().toast(`Applying ${approvedCorrections.length} correction(s) to Full List...', '✅ Apply Range Corrections', 3);
+  
+  // Read Full List
+  const fullListSheet = ss.getSheetByName('Full List');
+  if (!fullListSheet) {
+    ui.alert('❌ Error', 'Full List sheet not found.', ui.ButtonSet.OK);
+    return;
+  }
+  
+  const fullListData = fullListSheet.getDataRange().getValues();
+  const fullListHeaders = fullListData[0];
+  const fullListColIdx = {};
+  fullListHeaders.forEach((h, i) => { fullListColIdx[h] = i; });
+  
+  // Apply corrections to Full List
+  let updatedCount = 0;
+  
+  for (const correction of approvedCorrections) {
+    // Find matching row in Full List
+    for (let i = 1; i < fullListData.length; i++) {
+      const row = fullListData[i];
+      const region = row[fullListColIdx['Region']];
+      const aonCode = row[fullListColIdx['Aon Code']];
+      const level = row[fullListColIdx['CIQ Level']];
+      
+      if (region === correction.region && aonCode === correction.jobFamily && level === correction.level) {
+        // Update the appropriate metric
+        const metricCol = fullListColIdx[correction.metric];
+        if (metricCol !== undefined) {
+          fullListSheet.getRange(i + 1, metricCol + 1).setValue(correction.recommendedValue);
+          updatedCount++;
+          
+          Logger.log(`Updated: ${region} | ${aonCode} | ${level} | ${correction.metric} → ${correction.recommendedValue}`);
+        }
+      }
+    }
+  }
+  
+  // Update Full List USD if it exists
+  const fullListUSDSheet = ss.getSheetByName('Full List USD');
+  if (fullListUSDSheet) {
+    SpreadsheetApp.getActive().toast('Updating Full List USD...', '✅ Apply Range Corrections', 3);
+    
+    // Get FX rates from Full List (assumes columns are in same order)
+    const fxCol = fullListColIdx['FX Rate'];
+    
+    if (fxCol !== undefined) {
+      // Apply same corrections with FX conversion
+      for (const correction of approvedCorrections) {
+        for (let i = 1; i < fullListData.length; i++) {
+          const row = fullListData[i];
+          const region = row[fullListColIdx['Region']];
+          const aonCode = row[fullListColIdx['Aon Code']];
+          const level = row[fullListColIdx['CIQ Level']];
+          const fxRate = parseFloat(row[fxCol]) || 1;
+          
+          if (region === correction.region && aonCode === correction.jobFamily && level === correction.level) {
+            const metricCol = fullListColIdx[correction.metric];
+            if (metricCol !== undefined) {
+              const usdValue = correction.recommendedValue / fxRate;
+              fullListUSDSheet.getRange(i + 1, metricCol + 1).setValue(usdValue);
+            }
+          }
+        }
+      }
+    }
+  }
+  
+  // Mark applied corrections as "Applied" in issues sheet
+  for (const correction of approvedCorrections) {
+    issuesSheet.getRange(correction.issueRow, issuesColIdx['Status'] + 1).setValue('Applied');
+    issuesSheet.getRange(correction.issueRow, 1, 1, issueHeaders.length).setBackground('#d4edda');  // Green
+  }
+  
+  ui.alert('✅ Range Corrections Applied', 
+    `Successfully applied ${updatedCount} correction(s) to Full List.\n\n` +
+    `${fullListUSDSheet ? 'Full List USD has also been updated.\n\n' : ''}` +
+    `Applied corrections have been marked as "Applied" in the Range Progression Issues sheet.\n\n` +
+    `You may want to run "Build Market Data" again to refresh calculator sheets.`,
+    ui.ButtonSet.OK);
+  
+  SpreadsheetApp.getActive().toast('✅ Corrections applied successfully!', '', 3);
 }
