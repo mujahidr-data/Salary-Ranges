@@ -14,15 +14,22 @@
  * - Persistent legacy mapping storage
  * - Interactive calculator UI
  * 
- * @version 4.10.1
+ * @version 4.11.0
  * @date 2025-11-27
- * @changelog v4.10.1 - CRITICAL FIX: Column mismatch in Employees Mapped (15→16)
+ * @changelog v4.11.0 - FEATURE: Full Aon Code column in Employees Mapped
+ *   - NEW COLUMN: "Full Aon Code" (column I) shows complete code with level
+ *   - Example: Base "EN.SODE" + Level "L3 IC" → Full "EN.SODE.P3"
+ *   - Helps identify exact market data lookup code
+ *   - Shows if rollup data would be used (.R3 vs .P3)
+ *   - Makes mapping decisions easier with visible complete codes
+ *   - Schema: 16 → 17 columns (Full Aon Code inserted after Level)
+ *   - All column indices updated (Status: K→L, Salary: L→M, etc.)
+ *   - Conditional formatting rules adjusted for new column positions
+ *   - Legacy mappings and CR calculations updated
+ * @previous v4.10.1 - CRITICAL FIX: Column mismatch in Employees Mapped (15→16)
  *   - Error: "The data has 16 but the range has 15"
  *   - Root cause: v4.9.0 added Market Data Missing column (16th)
  *   - Fixed 4 locations: clearContent, setValues, and 2× getValues
- *   - All Employees Mapped operations now use 16 columns
- *   - Fresh Build → Import Bob Data now works correctly
- * @previous v4.10.0 - FEATURE: Range Progression QA System
  *   - NEW: Review Range Progression - Analyzes Full List for range violations
  *   - NEW: Apply Range Corrections - Updates Full List with approved changes
  *   - Detects: Ranges that decrease or stay flat as levels increase
@@ -3740,7 +3747,7 @@ function updateLegacyMappingsFromApproved_() {
   }
   
   // Get all approved mappings from Employees Mapped
-  const empVals = empSh.getRange(2,1,empSh.getLastRow()-1,16).getValues();
+  const empVals = empSh.getRange(2,1,empSh.getLastRow()-1,17).getValues();
   const approvedMappings = new Map(); // empID → {jobFamily, fullMapping}
   
   let approvedCount = 0;
@@ -3750,7 +3757,7 @@ function updateLegacyMappingsFromApproved_() {
     const empID = String(row[0] || '').trim();
     const aonCode = String(row[5] || '').trim(); // Column F (index 5)
     const ciqLevel = String(row[7] || '').trim(); // Column H (index 7)
-    const status = String(row[10] || '').trim(); // Column K (index 10)
+    const status = String(row[11] || '').trim(); // Column L (index 11) - shifted from K
     
     // Debug logging for first few rows
     if (approvedCount + skippedCount < 3) {
@@ -4288,28 +4295,28 @@ function syncEmployeesMappedSheet_() {
   
   // Create headers if needed
   if (empSh.getLastRow() === 0) {
-    empSh.getRange(1,1,1,16).setValues([[ 
+    empSh.getRange(1,1,1,17).setValues([[ 
       'Employee ID', 'Employee Name', 'Job Title', 'Department', 'Site',
-      'Aon Code', 'Job Family (Exec Description)', 'Level', 'Confidence', 'Source', 'Status', 'Base Salary', 'Start Date',
+      'Aon Code', 'Job Family (Exec Description)', 'Level', 'Full Aon Code', 'Confidence', 'Source', 'Status', 'Base Salary', 'Start Date',
       'Level Anomaly', 'Title Anomaly', 'Market Data Missing'
     ]]);
     empSh.setFrozenRows(1);
-    empSh.getRange(1,1,1,16).setFontWeight('bold');
+    empSh.getRange(1,1,1,17).setFontWeight('bold');
   }
   
   // Get existing mappings (preserve approved ones)
   const existing = new Map();
   if (empSh.getLastRow() > 1) {
-    const empVals = empSh.getRange(2,1,empSh.getLastRow()-1,16).getValues();
+    const empVals = empSh.getRange(2,1,empSh.getLastRow()-1,17).getValues();
     empVals.forEach(row => {
       if (row[0]) {
         existing.set(String(row[0]).trim(), {
           aonCode: row[5] || '',
           jobFamilyDesc: row[6] || '',
           level: row[7] || '',
-          confidence: row[8] || '',
-          source: row[9] || '',
-          status: row[10] || ''
+          confidence: row[9] || '',   // Shifted from 8
+          source: row[10] || '',       // Shifted from 9
+          status: row[11] || ''        // Shifted from 10
         });
       }
     });
@@ -4555,21 +4562,28 @@ function syncEmployeesMappedSheet_() {
       }
     }
     
-    rows.push([empID, name, title, dept, site, aonCode, jobFamilyDesc, ciqLevel, confidence, source, status, salary, startDate, levelAnomaly, titleAnomaly, marketDataMissing]);
+    // Build Full Aon Code (e.g., "EN.SODE.P3")
+    let fullAonCode = '';
+    if (aonCode && ciqLevel) {
+      const levelToken = _ciqLevelToToken_(ciqLevel); // e.g., "L3 IC" → "P3"
+      fullAonCode = levelToken ? `${aonCode}.${levelToken}` : aonCode;
+    }
+    
+    rows.push([empID, name, title, dept, site, aonCode, jobFamilyDesc, ciqLevel, fullAonCode, confidence, source, status, salary, startDate, levelAnomaly, titleAnomaly, marketDataMissing]);
   }
   
   // Write to sheet
   SpreadsheetApp.getActive().toast('Writing data (3/3)...', 'Employee Mapping', 3);
-  empSh.getRange(2,1,Math.max(1, empSh.getMaxRows()-1),16).clearContent();
+  empSh.getRange(2,1,Math.max(1, empSh.getMaxRows()-1),17).clearContent();
   if (rows.length) {
-    empSh.getRange(2,1,rows.length,16).setValues(rows);
+    empSh.getRange(2,1,rows.length,17).setValues(rows);
     
-    // Add data validation for Status column (K)
+    // Add data validation for Status column (L - shifted from K due to new column)
     const statusRule = SpreadsheetApp.newDataValidation()
       .requireValueInList(['Needs Review', 'Approved', 'Rejected'], true)
       .setAllowInvalid(false)
       .build();
-    empSh.getRange(2,11,rows.length,1).setDataValidation(statusRule);
+    empSh.getRange(2,12,rows.length,1).setDataValidation(statusRule);
   }
   
   // OPTIMIZATION: Smart conditional formatting skip (only update if rules missing or significant row count change)
@@ -4584,48 +4598,48 @@ function syncEmployeesMappedSheet_() {
   
   // Green: Approved
   rules.push(SpreadsheetApp.newConditionalFormatRule()
-    .whenFormulaSatisfied('=$K2="Approved"')
+    .whenFormulaSatisfied('=$L2="Approved"')  // Changed from K to L
     .setBackground('#D5F5E3')
-    .setRanges([empSh.getRange('A2:P')])
+    .setRanges([empSh.getRange('A2:Q')])  // Changed from P to Q
     .build());
   
   // Yellow: Needs Review
   rules.push(SpreadsheetApp.newConditionalFormatRule()
-    .whenFormulaSatisfied('=$K2="Needs Review"')
+    .whenFormulaSatisfied('=$L2="Needs Review"')  // Changed from K to L
     .setBackground('#FFF9C4')
-    .setRanges([empSh.getRange('A2:P')])
+    .setRanges([empSh.getRange('A2:Q')])  // Changed from P to Q
     .build());
   
   // Red: Rejected or missing mapping
   rules.push(SpreadsheetApp.newConditionalFormatRule()
-    .whenFormulaSatisfied('=OR($K2="Rejected",AND(LEN($A2)>0,OR(LEN($F2)=0,LEN($H2)=0)))')
+    .whenFormulaSatisfied('=OR($L2="Rejected",AND(LEN($A2)>0,OR(LEN($F2)=0,LEN($H2)=0)))')  // Changed K to L
     .setBackground('#FDE7E9')
     .setFontColor('#D32F2F')
-    .setRanges([empSh.getRange('A2:P')])
+    .setRanges([empSh.getRange('A2:Q')])  // Changed from P to Q
     .build());
   
   // Orange: Level Anomaly
   rules.push(SpreadsheetApp.newConditionalFormatRule()
-    .whenFormulaSatisfied('=LEN($N2)>0')
+    .whenFormulaSatisfied('=LEN($O2)>0')  // Changed from N to O
     .setBackground('#FFE5CC')
     .setFontColor('#E65100')
-    .setRanges([empSh.getRange('N2:N')])
+    .setRanges([empSh.getRange('O2:O')])  // Changed from N to O
     .build());
   
   // Purple: Title Anomaly
   rules.push(SpreadsheetApp.newConditionalFormatRule()
-    .whenFormulaSatisfied('=LEN($O2)>0')
+    .whenFormulaSatisfied('=LEN($P2)>0')  // Changed from O to P
     .setBackground('#E1D5F7')
     .setFontColor('#6A1B9A')
-    .setRanges([empSh.getRange('O2:O')])
+    .setRanges([empSh.getRange('P2:P')])  // Changed from O to P
     .build());
   
   // Red: Market Data Missing
   rules.push(SpreadsheetApp.newConditionalFormatRule()
-    .whenFormulaSatisfied('=LEN($P2)>0')
+    .whenFormulaSatisfied('=LEN($Q2)>0')  // Changed from P to Q
     .setBackground('#FFCDD2')
     .setFontColor('#B71C1C')
-    .setRanges([empSh.getRange('P2:P')])
+    .setRanges([empSh.getRange('Q2:Q')])  // Changed from P to Q
     .build());
   
     empSh.setConditionalFormatRules(rules);
@@ -5189,7 +5203,7 @@ function _preIndexEmployeesForCR_() {
   }
   
   // Read employees ONCE
-  const empVals = empSh.getRange(2,1,empSh.getLastRow()-1,16).getValues();
+  const empVals = empSh.getRange(2,1,empSh.getLastRow()-1,17).getValues();
   const execMap = _getExecDescMap_();
   const cutoffDate = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000);
   
@@ -5198,9 +5212,9 @@ function _preIndexEmployeesForCR_() {
     const aonCode = String(row[5] || '').trim();
     const empLevel = String(row[7] || '').trim(); // Column H
     const empSite = String(row[4] || '').trim();
-    const status = String(row[10] || '').trim(); // Column K
-    const salary = row[11]; // Column L
-    const startDate = row[12]; // Column M
+    const status = String(row[11] || '').trim(); // Column L (shifted from K)
+    const salary = row[12]; // Column M (shifted from L)
+    const startDate = row[13]; // Column N (shifted from M)
     
     if (status !== 'Approved' || !salary || isNaN(salary) || salary <= 0) return;
     
