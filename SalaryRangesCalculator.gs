@@ -14,9 +14,15 @@
  * - Persistent legacy mapping storage
  * - Interactive calculator UI
  * 
- * @version 4.10.0
+ * @version 4.10.1
  * @date 2025-11-27
- * @changelog v4.10.0 - FEATURE: Range Progression QA System
+ * @changelog v4.10.1 - CRITICAL FIX: Column mismatch in Employees Mapped (15→16)
+ *   - Error: "The data has 16 but the range has 15"
+ *   - Root cause: v4.9.0 added Market Data Missing column (16th)
+ *   - Fixed 4 locations: clearContent, setValues, and 2× getValues
+ *   - All Employees Mapped operations now use 16 columns
+ *   - Fresh Build → Import Bob Data now works correctly
+ * @previous v4.10.0 - FEATURE: Range Progression QA System
  *   - NEW: Review Range Progression - Analyzes Full List for range violations
  *   - NEW: Apply Range Corrections - Updates Full List with approved changes
  *   - Detects: Ranges that decrease or stay flat as levels increase
