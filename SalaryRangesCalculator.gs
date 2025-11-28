@@ -14,7 +14,7 @@
  * - Persistent legacy mapping storage
  * - Interactive calculator UI
  * 
- * @version 4.25.1
+ * @version 4.26.0
  * @date 2025-11-28
  * @performance Highly optimized with strategic caching and batch operations:
  *   - Pre-loaded Aon data: Saves 10,080+ sheet reads (~95% faster market data build)
@@ -25,7 +25,21 @@
  *   - Legacy mappings batch load: Saves 600+ lookups (~90% faster mapping resolution)
  *   - Pre-indexed CR groups: ~98% faster CR calculations (Map-based grouping)
  *   - Reduced sleep timers: 500ms→300ms, 1000ms→500ms (~40% faster workflows)
- * @changelog v4.25.1 - HOTFIX: Cannot access fullAonCode before initialization
+ * @changelog v4.26.0 - CRITICAL FIX: CR values showing when employee count is 0
+ *   - USER REPORT: "how do we have avg cr when there are no employees?"
+ *   - ROOT CAUSE: Active/Inactive filter mismatch between two functions:
+ *     1. _buildInternalIndex_() counted ONLY active employees ✓
+ *     2. _preIndexEmployeesForCR_() calculated CR using ALL employees (active + inactive) ❌
+ *   - RESULT: Rows with 0 active but some inactive employees showed:
+ *     • Emp Count = 0 (only active)
+ *     • Avg CR = 0.93 (includes inactive) ← IMPOSSIBLE!
+ *   - FIXED: Added active status filter to _preIndexEmployeesForCR_():
+ *     • Reads Base Data to build activeStatusMap (same as _buildInternalIndex_)
+ *     • Checks isActive before including employee in CR calculations
+ *     • Added logging: "Skipped X inactive employees"
+ *   - IMPACT: CR calculations now match employee counts (both use same active filter)
+ *   - ACTION: User must run "Build Market Data" to regenerate CR with correct filter
+ * @previous v4.25.1 - HOTFIX: Cannot access fullAonCode before initialization
  *   - CRITICAL: Import Bob Data failed with "Cannot access 'fullAonCode' before initialization"
  *   - CAUSE: v4.25.0 changed Level Anomaly to use fullAonCode, but it was USED at line 4725 
  *     before being DEFINED at line 4786 (JavaScript temporal dead zone error)
@@ -5643,10 +5657,31 @@ function _preIndexEmployeesForCR_() {
   const ss = SpreadsheetApp.getActive();
   const empSh = ss.getSheetByName(SHEET_NAMES.EMPLOYEES_MAPPED);
   const perfSh = ss.getSheetByName(SHEET_NAMES.PERF_RATINGS);
+  const baseSh = ss.getSheetByName(SHEET_NAMES.BASE_DATA);
   
   const empIndex = new Map();
   
   if (!empSh || empSh.getLastRow() <= 1) return empIndex;
+  
+  // Build ACTIVE STATUS index from Base Data (same as _buildInternalIndex_)
+  const activeStatusMap = new Map();
+  if (baseSh && baseSh.getLastRow() > 1) {
+    const baseVals = baseSh.getDataRange().getValues();
+    const baseHead = baseVals[0].map(h => String(h || ''));
+    const iBaseEmpID = baseHead.findIndex(h => /Emp.*ID|Employee.*ID/i.test(h));
+    const iBaseActive = baseHead.findIndex(h => /Active.*Inactive/i.test(h));
+    
+    if (iBaseEmpID >= 0 && iBaseActive >= 0) {
+      for (let r = 1; r < baseVals.length; r++) {
+        const empID = String(baseVals[r][iBaseEmpID] || '').trim();
+        const activeStatus = String(baseVals[r][iBaseActive] || '').toLowerCase();
+        if (empID) {
+          activeStatusMap.set(empID, activeStatus === 'active');
+        }
+      }
+      Logger.log(`CR Index: Built active status map with ${activeStatusMap.size} employees`);
+    }
+  }
   
   // Build performance map ONCE
   const perfMap = new Map();
@@ -5671,6 +5706,7 @@ function _preIndexEmployeesForCR_() {
   const cutoffDate = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000);
   
   let newHireDebugCount = 0;
+  let skippedInactive = 0;
   
   empVals.forEach(row => {
     const empID = String(row[0] || '').trim();
@@ -5680,6 +5716,13 @@ function _preIndexEmployeesForCR_() {
     const status = String(row[12] || '').trim(); // Column M = Status
     const salary = row[13]; // Column N = Base Salary
     const startDate = row[14]; // Column O = Start Date
+    
+    // CRITICAL: Only include ACTIVE employees (same filter as _buildInternalIndex_)
+    const isActive = activeStatusMap.get(empID);
+    if (!isActive) {
+      skippedInactive++;
+      return;
+    }
     
     // Only include Approved or Legacy status for CR calculations
     if ((status !== 'Approved' && status !== 'Legacy') || !salary || isNaN(salary) || salary <= 0) return;
@@ -5731,10 +5774,10 @@ function _preIndexEmployeesForCR_() {
     totalNewHires += group.nhSalaries.length;
   });
   
-  Logger.log(`Pre-indexed ${empIndex.size} employee groups`);
+  Logger.log(`Pre-indexed ${empIndex.size} employee groups for CR calculations`);
+  Logger.log(`Skipped ${skippedInactive} inactive employees (same filter as internal stats)`);
   Logger.log(`New Hire CR: Found ${totalNewHires} total employees hired in last 365 days (cutoff: ${cutoffDate.toISOString().split('T')[0]})`);
   
-  Logger.log(`Pre-indexed ${empIndex.size} employee groups`);
   return empIndex;
 }
 
