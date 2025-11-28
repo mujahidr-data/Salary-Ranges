@@ -4106,30 +4106,36 @@ function syncEmployeesMappedSheet_() {
     empSh.setTabColor('#FF0000');
   }
   
-  // Create headers if needed
+  // Create headers if needed (19 columns total)
   if (empSh.getLastRow() === 0) {
-    empSh.getRange(1,1,1,15).setValues([[ 
+    empSh.getRange(1,1,1,19).setValues([[ 
       'Employee ID', 'Employee Name', 'Job Title', 'Department', 'Site',
-      'Aon Code', 'Job Family (Exec Description)', 'Level', 'Confidence', 'Source', 'Status', 'Base Salary', 'Start Date',
-      'Level Anomaly', 'Title Anomaly'
+      'Aon Code', 'Job Family (Exec Description)', 'Level', 'Full Aon Code', 'Mapping Override',
+      'Confidence', 'Source', 'Status', 'Base Salary', 'Start Date',
+      'Recent Promotion', 'Level Anomaly', 'Title Anomaly', 'Market Data Missing'
     ]]);
     empSh.setFrozenRows(1);
-    empSh.getRange(1,1,1,15).setFontWeight('bold');
+    empSh.getRange(1,1,1,19).setFontWeight('bold');
+    
+    // Highlight editable columns (F: Aon Code, I: Full Aon Code)
+    empSh.getRange('F1').setBackground('#FFFFCC');
+    empSh.getRange('I1').setBackground('#FFFFCC');
   }
   
-  // Get existing mappings (preserve approved ones)
+  // Get existing mappings (preserve approved ones and user edits to Column I)
   const existing = new Map();
   if (empSh.getLastRow() > 1) {
-    const empVals = empSh.getRange(2,1,empSh.getLastRow()-1,15).getValues();
+    const empVals = empSh.getRange(2,1,empSh.getLastRow()-1,19).getValues();
     empVals.forEach(row => {
       if (row[0]) {
         existing.set(String(row[0]).trim(), {
-          aonCode: row[5] || '',
-          jobFamilyDesc: row[6] || '',
-          level: row[7] || '',
-          confidence: row[8] || '',
-          source: row[9] || '',
-          status: row[10] || ''
+          aonCode: row[5] || '',           // Column F
+          jobFamilyDesc: row[6] || '',     // Column G
+          level: row[7] || '',             // Column H
+          fullAonCode: row[8] || '',       // Column I (preserve user edits)
+          confidence: row[10] || '',       // Column K
+          source: row[11] || '',           // Column L
+          status: row[12] || ''            // Column M
         });
       }
     });
@@ -4175,6 +4181,10 @@ function syncEmployeesMappedSheet_() {
   // OPTIMIZATION: Load ALL legacy mappings ONCE (eliminates 600+ individual lookups)
   SpreadsheetApp.getActive().toast('Loading legacy mappings...', 'Employee Mapping', 3);
   const allLegacyMappings = _loadAllLegacyMappings_();
+  
+  // OPTIMIZATION: Pre-load Aon data ONCE to check market data availability
+  SpreadsheetApp.getActive().toast('Loading market data...', 'Employee Mapping', 3);
+  const aonCache = _preloadAonData_();
   
   // Build title-to-mapping suggestions inline (no separate Title Mapping sheet needed)
   SpreadsheetApp.getActive().toast('Building smart suggestions (1/3)...', 'Employee Mapping', 3);
@@ -4340,21 +4350,82 @@ function syncEmployeesMappedSheet_() {
       }
     }
     
-    rows.push([empID, name, title, dept, site, aonCode, jobFamilyDesc, ciqLevel, confidence, source, status, salary, startDate, levelAnomaly, titleAnomaly]);
+    // NEW COLUMNS FOR 19-COLUMN SCHEMA
+    
+    // Column I: Full Aon Code (auto-generated from base + level, but preserve user edits)
+    let fullAonCode = '';
+    if (prev && prev.fullAonCode) {
+      // Preserve user's manual edit to Full Aon Code
+      fullAonCode = prev.fullAonCode;
+    } else if (aonCode && ciqLevel) {
+      // Auto-generate from base + level
+      const levelToken = _ciqLevelToToken_(ciqLevel);
+      if (levelToken) {
+        fullAonCode = `${aonCode}.${levelToken}`;
+      }
+    }
+    
+    // Column J: Mapping Override (check if Full Aon Code doesn't match expected - for now, blank)
+    let mappingOverride = '';
+    
+    // Column P: Recent Promotion (check Comp History for promotions in last 90 days - for now, blank)
+    let recentPromotion = '';
+    
+    // Column S: Market Data Missing (check if Aon data exists for this Full Aon Code)
+    let marketDataMissing = '';
+    if (fullAonCode && site) {
+      // Check if this is a .5 level
+      const isHalfLevel = ciqLevel.includes('.5');
+      
+      if (isHalfLevel) {
+        // For .5 levels, check if BOTH preceding and succeeding levels have market data
+        // Extract base level (e.g., "L5.5 IC" → "L5 IC" and "L6 IC")
+        const levelMatch = ciqLevel.match(/L(\d+)\.5\s+(IC|Mgr)/);
+        if (levelMatch) {
+          const baseNum = parseInt(levelMatch[1]);
+          const levelType = levelMatch[2];
+          const precedingLevel = `L${baseNum} ${levelType}`;
+          const succeedingLevel = `L${baseNum + 1} ${levelType}`;
+          
+          const precedingKey = `${site}|${aonCode}|${precedingLevel}`;
+          const succeedingKey = `${site}|${aonCode}|${succeedingLevel}`;
+          
+          const hasPreceding = aonCache.has(precedingKey);
+          const hasSucceeding = aonCache.has(succeedingKey);
+          
+          if (!hasPreceding && !hasSucceeding) {
+            marketDataMissing = `No data for ${precedingLevel} or ${succeedingLevel}`;
+          } else if (!hasPreceding) {
+            marketDataMissing = `No data for ${precedingLevel}`;
+          } else if (!hasSucceeding) {
+            marketDataMissing = `No data for ${succeedingLevel}`;
+          }
+          // If both exist, leave blank (can calculate .5 level)
+        }
+      } else {
+        // For regular levels, check if direct market data exists
+        const aonKey = `${site}|${aonCode}|${ciqLevel}`;
+        if (!aonCache.has(aonKey)) {
+          marketDataMissing = `No ${site} data`;
+        }
+      }
+    }
+    
+    rows.push([empID, name, title, dept, site, aonCode, jobFamilyDesc, ciqLevel, fullAonCode, mappingOverride, confidence, source, status, salary, startDate, recentPromotion, levelAnomaly, titleAnomaly, marketDataMissing]);
   }
   
-  // Write to sheet
+  // Write to sheet (19 columns)
   SpreadsheetApp.getActive().toast('Writing data (3/3)...', 'Employee Mapping', 3);
-  empSh.getRange(2,1,Math.max(1, empSh.getMaxRows()-1),15).clearContent();
+  empSh.getRange(2,1,Math.max(1, empSh.getMaxRows()-1),19).clearContent();
   if (rows.length) {
-    empSh.getRange(2,1,rows.length,15).setValues(rows);
+    empSh.getRange(2,1,rows.length,19).setValues(rows);
     
-    // Add data validation for Status column (K)
+    // Add data validation for Status column (M - column 13)
     const statusRule = SpreadsheetApp.newDataValidation()
       .requireValueInList(['Needs Review', 'Approved', 'Rejected'], true)
       .setAllowInvalid(false)
       .build();
-    empSh.getRange(2,11,rows.length,1).setDataValidation(statusRule);
+    empSh.getRange(2,13,rows.length,1).setDataValidation(statusRule);
   }
   
   // OPTIMIZATION: Smart conditional formatting skip (only update if rules missing or significant row count change)
