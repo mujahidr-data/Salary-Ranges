@@ -4106,16 +4106,16 @@ function syncEmployeesMappedSheet_() {
     empSh.setTabColor('#FF0000');
   }
   
-  // Create headers if needed (19 columns total)
+  // Create headers if needed (20 columns total)
   if (empSh.getLastRow() === 0) {
-    empSh.getRange(1,1,1,19).setValues([[ 
+    empSh.getRange(1,1,1,20).setValues([[ 
       'Employee ID', 'Employee Name', 'Job Title', 'Department', 'Site',
       'Aon Code', 'Job Family (Exec Description)', 'Level', 'Full Aon Code', 'Mapping Override',
       'Confidence', 'Source', 'Status', 'Base Salary', 'Start Date',
-      'Recent Promotion', 'Level Anomaly', 'Title Anomaly', 'Market Data Missing'
+      'Recent Promotion', 'Level Anomaly', 'Title Anomaly', 'Market Data Missing', 'Active/Inactive'
     ]]);
     empSh.setFrozenRows(1);
-    empSh.getRange(1,1,1,19).setFontWeight('bold');
+    empSh.getRange(1,1,1,20).setFontWeight('bold');
     
     // Highlight editable columns (F: Aon Code, I: Full Aon Code)
     empSh.getRange('F1').setBackground('#FFFFCC');
@@ -4125,7 +4125,8 @@ function syncEmployeesMappedSheet_() {
   // Get existing mappings (preserve approved ones and user edits to Column I)
   const existing = new Map();
   if (empSh.getLastRow() > 1) {
-    const empVals = empSh.getRange(2,1,empSh.getLastRow()-1,19).getValues();
+    const maxCols = Math.min(20, empSh.getLastColumn()); // Handle both 19 and 20 column versions
+    const empVals = empSh.getRange(2,1,empSh.getLastRow()-1,maxCols).getValues();
     empVals.forEach(row => {
       if (row[0]) {
         existing.set(String(row[0]).trim(), {
@@ -4459,14 +4460,17 @@ function syncEmployeesMappedSheet_() {
       }
     }
     
-    rows.push([empID, name, title, dept, site, aonCode, jobFamilyDesc, ciqLevel, fullAonCode, mappingOverride, confidence, source, status, salary, startDate, recentPromotion, levelAnomaly, titleAnomaly, marketDataMissing]);
+    // Column T: Active/Inactive status (from Base Data)
+    const activeStatusText = activeStatus.toLowerCase() === 'active' ? 'Active' : 'Inactive';
+    
+    rows.push([empID, name, title, dept, site, aonCode, jobFamilyDesc, ciqLevel, fullAonCode, mappingOverride, confidence, source, status, salary, startDate, recentPromotion, levelAnomaly, titleAnomaly, marketDataMissing, activeStatusText]);
   }
   
-  // Write to sheet (19 columns)
+  // Write to sheet (20 columns)
   SpreadsheetApp.getActive().toast('Writing data (3/3)...', 'Employee Mapping', 3);
-  empSh.getRange(2,1,Math.max(1, empSh.getMaxRows()-1),19).clearContent();
+  empSh.getRange(2,1,Math.max(1, empSh.getMaxRows()-1),20).clearContent();
   if (rows.length) {
-    empSh.getRange(2,1,rows.length,19).setValues(rows);
+    empSh.getRange(2,1,rows.length,20).setValues(rows);
     
     // Add data validation for Status column (M - column 13)
     const statusRule = SpreadsheetApp.newDataValidation()
@@ -4530,7 +4534,7 @@ function syncEmployeesMappedSheet_() {
     Logger.log(`Skipped conditional formatting (${existingRules.length} rules already present)`);
   }
   
-  autoResizeColumnsIfNotCalculator(empSh, 1, 19);
+  autoResizeColumnsIfNotCalculator(empSh, 1, 20);
   
   // Count issues
   const recentPromotionCount = rows.filter(row => row[15] && row[15].length > 0).length; // Column P (index 15)
