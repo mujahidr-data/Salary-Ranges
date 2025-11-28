@@ -14,7 +14,7 @@
  * - Persistent legacy mapping storage
  * - Interactive calculator UI
  * 
- * @version 4.22.0
+ * @version 4.23.0
  * @date 2025-11-28
  * @performance Highly optimized with strategic caching and batch operations:
  *   - Pre-loaded Aon data: Saves 10,080+ sheet reads (~95% faster market data build)
@@ -25,7 +25,16 @@
  *   - Legacy mappings batch load: Saves 600+ lookups (~90% faster mapping resolution)
  *   - Pre-indexed CR groups: ~98% faster CR calculations (Map-based grouping)
  *   - Reduced sleep timers: 500ms→300ms, 1000ms→500ms (~40% faster workflows)
- * @changelog v4.22.0 - CRITICAL BUGFIX: Internal stats reading wrong columns
+ * @changelog v4.23.0 - FEATURE: Smart currency rounding for cleaner ranges
+ *   - ADDED: Region-based currency rounding in Full List generation
+ *   - India: Round to nearest ₹1,000 (e.g., 1,234,567 → 1,235,000)
+ *   - US: Round to nearest $100 (e.g., $123,456 → $123,500)
+ *   - UK: Round to nearest £100 (e.g., £123,456 → £123,500)
+ *   - APPLIES TO: All percentile columns (P10-P90) + Range Start/Mid/End
+ *   - FULL LIST USD: Only rounds US rows (UK/India already rounded in local currency)
+ *   - LOGIC: Cleaner numbers for external communication and offers
+ *   - IMPACT: More professional-looking salary ranges (no odd cents/paise)
+ * @previous v4.22.0 - CRITICAL BUGFIX: Internal stats reading wrong columns
  *   - FIXED: _buildInternalIndex_() was reading outdated column positions
  *   - BUG: After adding new columns (Mapping Override, Recent Promotion), indices not updated
  *   - WRONG: Reading only 13 columns (should be 19)
@@ -1853,9 +1862,15 @@ function buildFullListUsd_() {
     const fx = fxMap.get(region) || 1;
     const mul = (i) => { if (i >= 0) { const n = toNumber(row[i]); row[i] = isNaN(n) ? row[i] : n * fx; } };
     [cP10,cP25,cP40,cP50,cP625,cP75,cP90,cRangeStart,cRangeMid,cRangeEnd,cIMin,cIMed,cIMax].forEach(mul);
-    // Round market percentiles to nearest hundred after FX conversion
-    const r100 = (i) => { if (i >= 0) { const n = toNumber(row[i]); if (!isNaN(n)) row[i] = _round100_(n); } };
-    [cP10,cP25,cP40,cP50,cP625,cP75,cP90,cRangeStart,cRangeMid,cRangeEnd].forEach(r100);
+    
+    // Round to nearest 100 ONLY for US (already rounded in local currency for UK/India)
+    // UK/India were rounded to 100/1000 in local currency, then FX converted → keep precise
+    // US is already in USD, so round to clean nearest 100
+    if (region === 'US' || region === 'USA') {
+      const r100 = (i) => { if (i >= 0) { const n = toNumber(row[i]); if (!isNaN(n)) row[i] = _round100_(n); } };
+      [cP10,cP25,cP40,cP50,cP625,cP75,cP90,cRangeStart,cRangeMid,cRangeEnd].forEach(r100);
+    }
+    
     out.push(row);
   }
 
@@ -5808,18 +5823,36 @@ function rebuildFullListAllCombinations_() {
         // Key format: JobFamily+Level+Region (for calculator XLOOKUP)
         const key = `${execDesc}${ciqLevel}${region}`;
         
-        // Determine range start/mid/end based on category
+        // Helper: Round currency based on region
+        const roundCurrency = (value, region) => {
+          if (!value || value === '') return '';
+          const num = toNumber(value);
+          if (!num) return '';
+          
+          // India: Round to nearest 1,000
+          if (region === 'India') {
+            return Math.round(num / 1000) * 1000;
+          }
+          // US/UK: Round to nearest 100
+          else if (region === 'US' || region === 'UK') {
+            return Math.round(num / 100) * 100;
+          }
+          
+          return num; // Fallback: no rounding
+        };
+        
+        // Determine range start/mid/end based on category, then round by region
         let rangeStart, rangeMid, rangeEnd;
         if (category === 'X0') {
           // X0: P25 → P62.5 → P90
-          rangeStart = toNumber(p25) || toNumber(p40) || toNumber(p50) || '';
-          rangeMid = toNumber(p625) || toNumber(p75) || toNumber(p90) || '';
-          rangeEnd = toNumber(p90) || '';
+          rangeStart = roundCurrency(toNumber(p25) || toNumber(p40) || toNumber(p50) || '', region);
+          rangeMid = roundCurrency(toNumber(p625) || toNumber(p75) || toNumber(p90) || '', region);
+          rangeEnd = roundCurrency(toNumber(p90) || '', region);
         } else {
           // Y1: P10 → P40 → P62.5
-          rangeStart = toNumber(p10) || toNumber(p25) || toNumber(p40) || '';
-          rangeMid = toNumber(p40) || toNumber(p50) || toNumber(p625) || '';
-          rangeEnd = toNumber(p625) || toNumber(p75) || toNumber(p90) || '';
+          rangeStart = roundCurrency(toNumber(p10) || toNumber(p25) || toNumber(p40) || '', region);
+          rangeMid = roundCurrency(toNumber(p40) || toNumber(p50) || toNumber(p625) || '', region);
+          rangeEnd = roundCurrency(toNumber(p625) || toNumber(p75) || toNumber(p90) || '', region);
         }
         
         // OPTIMIZED: Calculate CR values from pre-indexed employee groups (instant lookup!)
@@ -5860,16 +5893,16 @@ function rebuildFullListAllCombinations_() {
           execDesc,     // Job Family (Exec)
           category,     // Category
           ciqLevel,     // CIQ Level
-          toNumber(p10) || '',
-          toNumber(p25) || '',
-          toNumber(p40) || '',
-          toNumber(p50) || '',
-          toNumber(p625) || '',
-          toNumber(p75) || '',
-          toNumber(p90) || '',
-          rangeStart,   // Range Start (P25 for X0, P10 for Y1)
-          rangeMid,     // Range Mid (P62.5 for X0, P40 for Y1)
-          rangeEnd,     // Range End (P90 for X0, P62.5 for Y1)
+          roundCurrency(p10, region),   // P10 (rounded)
+          roundCurrency(p25, region),   // P25 (rounded)
+          roundCurrency(p40, region),   // P40 (rounded)
+          roundCurrency(p50, region),   // P50 (rounded)
+          roundCurrency(p625, region),  // P62.5 (rounded)
+          roundCurrency(p75, region),   // P75 (rounded)
+          roundCurrency(p90, region),   // P90 (rounded)
+          rangeStart,   // Range Start (P25 for X0, P10 for Y1) - already rounded
+          rangeMid,     // Range Mid (P62.5 for X0, P40 for Y1) - already rounded
+          rangeEnd,     // Range End (P90 for X0, P62.5 for Y1) - already rounded
           intStats.min,
           intStats.med,
           intStats.max,
