@@ -3718,14 +3718,16 @@ function _ciqLevelToToken_(ciqLevel) {
   if (role === 'ic') {
     // IC levels
     if (levelNum <= 6.5) {
-      return `P${Math.floor(levelNum)}`;
+      // Use P prefix for IC (including .5 levels like P5.5, P6.5)
+      return `P${levelNum}`;
     } else {
       return 'E1'; // L7 IC = E1
     }
   } else {
     // Manager levels
     if (levelNum <= 6.5) {
-      return `M${Math.floor(levelNum)}`;
+      // Use M prefix for Mgr (including .5 levels like M5.5, M6.5)
+      return `M${levelNum}`;
     } else if (levelNum === 7) {
       return 'E1';
     } else if (levelNum === 8) {
@@ -3745,24 +3747,28 @@ function _ciqLevelToToken_(ciqLevel) {
  */
 function _parseLevelToken_(token) {
   if (!token) return '';
-  const match = token.match(/^([PME])(\d+)$/);
+  
+  // Updated regex to handle decimals (e.g., P5.5, M6.5)
+  const match = token.match(/^([PME])([\d.]+)$/);
   if (!match) return '';
   
   const letter = match[1];
-  const num = parseInt(match[2]);
+  const numStr = match[2];
+  const num = parseFloat(numStr);
   
-  if (letter === 'P') return `L${num} IC`;
-  if (letter === 'M') return `L${num} Mgr`;
+  if (letter === 'P') return `L${numStr} IC`;   // P5 → L5 IC, P5.5 → L5.5 IC
+  if (letter === 'M') return `L${numStr} Mgr`;  // M5 → L5 Mgr, M5.5 → L5.5 Mgr
   if (letter === 'E') {
     // Executive mapping (per user specification)
     // E1 = VP = L7 Mgr
     // E3 = SVP = L8 Mgr
     // E5 = C-Suite = L9 Mgr
     // E6 = CEO = L10+ Mgr
-    if (num === 1) return 'L7 Mgr';
-    if (num === 3) return 'L8 Mgr';
-    if (num === 5) return 'L9 Mgr';
-    if (num === 6) return 'L10+ Mgr';
+    const intNum = parseInt(numStr);
+    if (intNum === 1) return 'L7 Mgr';
+    if (intNum === 3) return 'L8 Mgr';
+    if (intNum === 5) return 'L9 Mgr';
+    if (intNum === 6) return 'L10+ Mgr';
   }
   return '';
 }
@@ -3793,15 +3799,15 @@ function createLookupSheet_() {
     ['L3 IC', 'P3'],
     ['L4 IC', 'P4'],
     ['L5 IC', 'P5'],
-    ['L5.5 IC', 'Avg of P5 and P6'],
+    ['L5.5 IC', 'P5.5 (Avg of P5 and P6)'],
     ['L6 IC', 'P6'],
-    ['L6.5 IC', 'Avg of P6 and E1'],
+    ['L6.5 IC', 'P6.5 (Avg of P6 and E1)'],
     ['L7 IC', 'E1'],
-    ['L4 Mgr', 'M3'],
-    ['L5 Mgr', 'M4'],
-    ['L5.5 Mgr', 'Avg of M4 and M5'],
-    ['L6 Mgr', 'M5'],
-    ['L6.5 Mgr', 'M6'],
+    ['L4 Mgr', 'M4'],
+    ['L5 Mgr', 'M5'],
+    ['L5.5 Mgr', 'M5.5 (Avg of M5 and M6)'],
+    ['L6 Mgr', 'M6'],
+    ['L6.5 Mgr', 'M6.5 (Avg of M6 and E1)'],
     ['L7 Mgr', 'E1'],
     ['L8 Mgr', 'E3'],
     ['L9 Mgr', 'E5'],
