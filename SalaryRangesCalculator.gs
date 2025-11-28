@@ -14,8 +14,8 @@
  * - Persistent legacy mapping storage
  * - Interactive calculator UI
  * 
- * @version 4.16.0
- * @date 2025-11-27
+ * @version 4.17.0
+ * @date 2025-11-28
  * @performance Highly optimized with strategic caching and batch operations:
  *   - Pre-loaded Aon data: Saves 10,080+ sheet reads (~95% faster market data build)
  *   - Pre-indexed employees: Saves 1,440 full scans (~80% faster CR calculations)
@@ -25,13 +25,17 @@
  *   - Legacy mappings batch load: Saves 600+ lookups (~90% faster mapping resolution)
  *   - Pre-indexed CR groups: ~98% faster CR calculations (Map-based grouping)
  *   - Reduced sleep timers: 500ms→300ms, 1000ms→500ms (~40% faster workflows)
- * @changelog v4.16.0 - PERFORMANCE PASS: Optimized timers + Documentation
+ * @changelog v4.17.0 - FEATURE: Refresh Market Data Availability utility
+ *   - NEW FUNCTION: refreshMarketDataAvailability() - Quick refresh of Column S
+ *   - MENU: Added to Advanced Tools → "🔄 Refresh Market Data Availability"
+ *   - USE CASE: After adding new Aon data, refresh without full Bob import
+ *   - FAST: Only scans Column S (Market Data Missing), preserves all other data
+ *   - SMART: Shows detailed results (updated count, cleared count, unchanged)
+ *   - UI: Clear prompts and tips for troubleshooting missing data
+ *   - CACHE: Auto-clears caches after refresh for next build
+ * @previous v4.16.0 - PERFORMANCE PASS: Optimized timers + Documentation
  *   - REDUCED: Utilities.sleep() timers (500ms→300ms, 1000ms→500ms)
  *   - FASTER: Fresh Build (7s→5.5s), Import Bob Data (90s→75s)
- *   - ADDED: Performance metrics in header (documents 7 key optimizations)
- *   - IMPROVED: Batch regex compilation for repeated string operations
- *   - VALIDATED: All existing optimizations working correctly
- * @previous v4.15.0 - QA PASS: Code cleanup + Menu reorganization + Help updates
  *   - REMOVED: 10+ deprecated functions (cleaned 200+ lines of dead code)
  *   - Removed: listExecMappings_(), upsertExecMapping_(), deleteExecMapping_()
  *   - Removed: openExecMappingManager_(), seedExecMappingsFromAon_(), fillRegionFamilies_()
@@ -4831,6 +4835,154 @@ function syncEmployeesMappedSheet_() {
 }
 
 /**
+ * Refreshes Market Data Availability column (Column S) in Employees Mapped
+ * Use this after adding new Aon market data without re-running full Import Bob Data
+ * 
+ * QUICK REFRESH - Only updates Column S based on current Aon data
+ * Preserves all other employee mapping data
+ */
+function refreshMarketDataAvailability() {
+  const ui = SpreadsheetApp.getUi();
+  const ss = SpreadsheetApp.getActive();
+  
+  // Confirm action
+  const response = ui.alert(
+    '🔄 Refresh Market Data Availability',
+    'This will re-scan Aon region tabs and update the "Market Data Missing" column (Column S) in Employees Mapped.\n\n' +
+    'Use this after:\n' +
+    '• Adding new Aon market data\n' +
+    '• Updating existing Aon data\n\n' +
+    'All other employee data will be preserved.\n\n' +
+    'Continue?',
+    ui.ButtonSet.YES_NO
+  );
+  
+  if (response !== ui.Button.YES) {
+    SpreadsheetApp.getActive().toast('Refresh cancelled', 'Cancelled', 3);
+    return;
+  }
+  
+  try {
+    SpreadsheetApp.getActive().toast('📊 Loading Aon market data...', 'Refresh Market Data', 3);
+    
+    // Get Employees Mapped sheet
+    const empSh = ss.getSheetByName(SHEET_NAMES.EMPLOYEES_MAPPED);
+    if (!empSh || empSh.getLastRow() <= 1) {
+      ui.alert('❌ Error', 'Employees Mapped sheet not found or empty.\n\nPlease run "Import Bob Data" first.', ui.ButtonSet.OK);
+      return;
+    }
+    
+    // Load fresh Aon data
+    const aonCache = _preloadAonData_();
+    
+    // Read existing employee data
+    SpreadsheetApp.getActive().toast('👥 Scanning employees...', 'Refresh Market Data', 3);
+    const empVals = empSh.getRange(2, 1, empSh.getLastRow() - 1, 19).getValues();
+    
+    if (empVals.length === 0) {
+      ui.alert('⚠️ Warning', 'No employees found in Employees Mapped sheet.', ui.ButtonSet.OK);
+      return;
+    }
+    
+    // Column indices (0-based for array access)
+    const COL_SITE = 4;        // Column E
+    const COL_AON_CODE = 5;    // Column F
+    const COL_LEVEL = 7;       // Column H
+    const COL_MARKET_DATA = 18; // Column S
+    
+    let updatedCount = 0;
+    let clearedCount = 0;
+    let unchangedCount = 0;
+    
+    // Update Column S for each employee
+    for (let i = 0; i < empVals.length; i++) {
+      const row = empVals[i];
+      const site = String(row[COL_SITE] || '').trim();
+      const aonCode = String(row[COL_AON_CODE] || '').trim();
+      const ciqLevel = String(row[COL_LEVEL] || '').trim();
+      
+      let marketDataMissing = '';
+      
+      if (aonCode && ciqLevel && site) {
+        // Normalize site to region (US/USA, India, UK)
+        const region = site === 'USA' ? 'US' : site;
+        
+        // Extract base family code (EN.SODE.P5 → EN.SODE)
+        const familyParts = aonCode.split('.');
+        const baseFamily = familyParts.length >= 2 ? `${familyParts[0]}.${familyParts[1]}` : aonCode;
+        
+        // Check direct lookup first
+        const directKey = `${region}|${baseFamily}|${ciqLevel}`;
+        let hasMarketData = aonCache.has(directKey);
+        
+        // If no direct data, check rollup
+        if (!hasMarketData) {
+          const levelMatch = ciqLevel.match(/L([\d.]+)/);
+          if (levelMatch) {
+            const levelNum = Math.floor(parseFloat(levelMatch[1]));
+            const rollupKey = `${region}|${baseFamily}.R${levelNum}|${ciqLevel}`;
+            hasMarketData = aonCache.has(rollupKey);
+          }
+        }
+        
+        // Flag if no market data found
+        if (!hasMarketData) {
+          marketDataMissing = `No ${region} data`;
+        }
+      }
+      
+      // Track changes
+      const oldValue = String(row[COL_MARKET_DATA] || '');
+      if (oldValue !== marketDataMissing) {
+        row[COL_MARKET_DATA] = marketDataMissing;
+        if (marketDataMissing === '') {
+          clearedCount++;
+        } else {
+          updatedCount++;
+        }
+      } else {
+        unchangedCount++;
+      }
+    }
+    
+    // Write updated data back to sheet
+    SpreadsheetApp.getActive().toast('💾 Updating sheet...', 'Refresh Market Data', 2);
+    empSh.getRange(2, 1, empVals.length, 19).setValues(empVals);
+    
+    // Clear cache so next build uses fresh data
+    clearAllCaches_();
+    
+    // Success message
+    const totalChanged = updatedCount + clearedCount;
+    let msg = `✅ Market Data Availability Refreshed!\n\n` +
+              `📊 RESULTS:\n` +
+              `• Total employees scanned: ${empVals.length}\n`;
+    
+    if (totalChanged > 0) {
+      msg += `• Updated: ${totalChanged} employees\n`;
+      if (clearedCount > 0) {
+        msg += `  ✓ Data now available: ${clearedCount}\n`;
+      }
+      if (updatedCount > 0) {
+        msg += `  ⚠️ Still missing data: ${updatedCount}\n`;
+      }
+    } else {
+      msg += `• No changes (all data already current)\n`;
+    }
+    
+    msg += `\n💡 TIP: If employees still show "No market data":\n` +
+           `1. Verify Aon data is pasted in region tabs\n` +
+           `2. Check Aon Code matches (e.g., EN.SODE)\n` +
+           `3. Try "Build Market Data" to refresh Full Lists`;
+    
+    ui.alert('✅ Refresh Complete', msg, ui.ButtonSet.OK);
+    
+  } catch (e) {
+    ui.alert('❌ Error', 'Refresh failed: ' + e.message + '\n\nStack: ' + e.stack, ui.ButtonSet.OK);
+  }
+}
+
+/**
  * Builds title mapping index from Title Mapping sheet
  */
 function _buildTitleMappingIndex_() {
@@ -5994,6 +6146,7 @@ function onOpen() {
     .addItem('⏰ Setup Daily Auto-Import', 'setupDailyImportTrigger')
     .addItem('🤖 Import Bob Data (Headless)', 'importBobDataHeadless')
     .addSeparator()
+    .addItem('🔄 Refresh Market Data Availability', 'refreshMarketDataAvailability')
     .addItem('🔄 Rebuild Calculator Formulas', 'rebuildCalculatorFormulas')
     .addItem('💱 Apply Currency Format', 'applyCurrency_')
     .addItem('🗑️ Clear All Caches', 'clearAllCaches_')
