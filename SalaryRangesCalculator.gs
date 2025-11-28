@@ -1340,90 +1340,121 @@ function _isNum_(v) { return v !== '' && v != null && isFinite(Number(v)); }
 
 function _buildInternalIndex_() {
   const ss = SpreadsheetApp.getActive();
-  const sh = ss.getSheetByName('Base Data');
+  const empSh = ss.getSheetByName('Employees Mapped');
+  const baseSh = ss.getSheetByName('Base Data');
   const out = new Map();
-  if (!sh) {
-    Logger.log('ERROR: Base Data sheet not found!');
+  
+  if (!empSh || empSh.getLastRow() <= 1) {
+    Logger.log('WARNING: Employees Mapped sheet not found or empty - internal stats will be blank');
+    return out;
+  }
+  
+  if (!baseSh || baseSh.getLastRow() <= 1) {
+    Logger.log('WARNING: Base Data sheet not found or empty - cannot check active status');
     return out;
   }
 
-  const values = _getSheetDataCached_(sh); // OPTIMIZED: Use cached data
-  const head = values[0].map(h => String(h || ''));
+  // Build active status index from Base Data
+  const baseVals = baseSh.getDataRange().getValues();
+  const baseHead = baseVals[0].map(h => String(h || ''));
+  const iBaseEmpID = baseHead.findIndex(h => /Emp.*ID|Employee.*ID/i.test(h));
+  const iBaseActive = baseHead.findIndex(h => /Active.*Inactive/i.test(h));
   
-  Logger.log(`Base Data headers (first 15): ${head.slice(0, 15).join(', ')}`);
-  
-  const colFam  = head.indexOf('Job Family Name');
-  const colMapN = head.indexOf('Mapped Family');
-  const colAct  = head.indexOf('Active/Inactive');
-  const colSite = head.indexOf('Site');
-  const colLvl  = head.indexOf('Job Level');
-  const colPay  = head.indexOf('Base salary');
-  
-  Logger.log(`Base Data column indices: Job Family Name=${colFam}, Mapped Family=${colMapN}, Active/Inactive=${colAct}, Site=${colSite}, Job Level=${colLvl}, Base salary=${colPay}`);
-  
-  if ([colFam,colAct,colSite,colLvl,colPay].some(i => i < 0)) {
-    Logger.log('ERROR: One or more required columns not found in Base Data!');
+  const activeStatusMap = new Map(); // empID → isActive
+  if (iBaseEmpID >= 0 && iBaseActive >= 0) {
+    for (let r = 1; r < baseVals.length; r++) {
+      const empID = String(baseVals[r][iBaseEmpID] || '').trim();
+      const activeStatus = String(baseVals[r][iBaseActive] || '').toLowerCase();
+      if (empID) {
+        activeStatusMap.set(empID, activeStatus === 'active');
+      }
+    }
+    Logger.log(`Built active status index: ${activeStatusMap.size} employees`);
+  } else {
+    Logger.log('WARNING: Could not find Emp ID or Active/Inactive columns in Base Data!');
     return out;
   }
+
+  const values = empSh.getRange(2, 1, empSh.getLastRow() - 1, 19).getValues();
+  
+  Logger.log(`Reading internal stats from Employees Mapped sheet: ${values.length} employees`);
+  
+  // Employees Mapped columns (19 total): 
+  // A: Employee ID, B: Name, C: Job Title, D: Department, E: Site
+  // F: Aon Code, G: Job Family (Exec Description), H: Level, I: Full Aon Code, J: Mapping Override
+  // K: Confidence, L: Source, M: Status, N: Base Salary, O: Start Date
+  // P: Recent Promotion, Q: Level Anomaly, R: Title Anomaly, S: Market Data Missing
+  const iEmpID = 0;     // Column A: Employee ID
+  const iSite = 4;      // Column E: Site
+  const iAonCode = 5;   // Column F: Aon Code
+  const iLevel = 7;     // Column H: Level
+  const iStatus = 12;   // Column M: Status (FIXED: was 10 = K = Confidence!)
+  const iSalary = 13;   // Column N: Base Salary (FIXED: was 11 = L = Source!)
 
   const buckets = new Map();
   let processedCount = 0;
   let skippedInactive = 0;
-  let skippedMissingData = 0;
+  let skippedNoMapping = 0;
+  let skippedNoSalary = 0;
   
-  for (let r=1; r<values.length; r++) {
+  for (let r = 0; r < values.length; r++) {
     const row = values[r];
-    const actStatus = String(row[colAct] || '').toLowerCase();
-    if (actStatus !== 'active') {
+    
+    const empID = String(row[iEmpID] || '').trim();
+    const site = String(row[iSite] || '').trim();
+    const aonCode = String(row[iAonCode] || '').trim();
+    const level = String(row[iLevel] || '').trim();
+    const status = String(row[iStatus] || '').trim();
+    const salary = row[iSalary];
+    
+    // CRITICAL: Only include ACTIVE employees for internal stats
+    const isActive = activeStatusMap.get(empID);
+    if (!isActive) {
       skippedInactive++;
       continue;
     }
-    const site = String(row[colSite] || '').trim();
-    const normSite = site === 'India' ? 'India' : (site === 'USA' ? 'USA' : (site === 'UK' ? 'UK' : site));
-    const famCode = String(row[colFam] || '').trim();
-    const execName = String(colMapN >= 0 ? (row[colMapN] || '') : (row[colFam] || '')).trim();
-    const ciq = String(row[colLvl] || '').trim();
-    const pay = toNumber_(row[colPay]);
     
-    if ((!famCode && !execName) || !ciq || isNaN(pay)) {
-      skippedMissingData++;
+    // Skip if no mapping
+    if (!aonCode || !level) {
+      skippedNoMapping++;
       continue;
     }
+    
+    // Skip if status is not Approved or Legacy (only use confirmed mappings)
+    if (status !== 'Approved' && status !== 'Legacy') {
+      skippedNoMapping++;
+      continue;
+    }
+    
+    // Skip if no salary
+    const pay = toNumber(salary);
+    if (isNaN(pay) || pay <= 0) {
+      skippedNoSalary++;
+      continue;
+    }
+    
+    // Normalize region (US → USA for consistency)
+    const normSite = site === 'US' ? 'USA' : (site === 'USA' ? 'USA' : (site === 'India' ? 'India' : (site === 'UK' ? 'UK' : site)));
     
     processedCount++;
     
     // Log first 3 employees for debugging
     if (processedCount <= 3) {
-      Logger.log(`Sample employee ${processedCount}: site=${normSite}, famCode=${famCode}, execName=${execName}, level=${ciq}, pay=${pay}`);
+      Logger.log(`Sample employee ${processedCount}: empID=${empID}, site=${normSite}, aonCode=${aonCode}, level=${level}, pay=${pay}, status=${status}, active=true`);
     }
     
-    // Primary index by Exec Description (normalized)
-    if (execName) {
-      const execKey = `${normSite}|${String(execName).toUpperCase()}|${ciq}`;
-      if (!buckets.has(execKey)) buckets.set(execKey, []);
-      buckets.get(execKey).push(pay);
-      
-      if (processedCount <= 3) {
-        Logger.log(`  → Created exec key: ${execKey}`);
-      }
-    }
+    // Create key: Region|AonCode|Level (e.g., "USA|EN.SODE|L5 IC")
+    const key = `${normSite}|${aonCode}|${level}`;
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key).push(pay);
     
-    const dot = famCode.lastIndexOf('.');
-    const base = dot >= 0 ? famCode.slice(0, dot) : famCode; // EN.SODE from EN.SODE.P5
-    const keys = new Set([base, remapAonCode_(base), reverseRemapAonCode_(base)]);
-    keys.forEach(b => {
-      if (!b) return;
-      const key = `${normSite}|${b}|${ciq}`;
-      if (!buckets.has(key)) buckets.set(key, []);
-      buckets.get(key).push(pay);
-      
-      if (processedCount <= 3) {
-        Logger.log(`  → Created aon key: ${key}`);
-      }
-    });
+    if (processedCount <= 3) {
+      Logger.log(`  → Created key: ${key}`);
+    }
   }
   
-  Logger.log(`Processed ${processedCount} active employees, skipped ${skippedInactive} inactive, skipped ${skippedMissingData} with missing data`);
+  Logger.log(`Processed ${processedCount} ACTIVE employees with approved mappings`);
+  Logger.log(`Skipped: ${skippedInactive} inactive, ${skippedNoMapping} without mapping, ${skippedNoSalary} without salary`);
   buckets.forEach((arr, key) => {
     arr.sort((a,b)=>a-b);
     const n = arr.length; const min = arr[0], max = arr[n-1];
@@ -4878,12 +4909,35 @@ function _preloadAonData_() {
  */
 function _preIndexEmployeesForCR_() {
   const ss = SpreadsheetApp.getActive();
-  const empSh = ss.getSheetByName(SHEET_NAMES.EMPLOYEES_MAPPED);
-  const perfSh = ss.getSheetByName(SHEET_NAMES.PERF_RATINGS);
+  const empSh = ss.getSheetByName('Employees Mapped');
+  const perfSh = ss.getSheetByName('Performance Ratings');
+  const baseSh = ss.getSheetByName('Base Data');
   
   const empIndex = new Map();
   
-  if (!empSh || empSh.getLastRow() <= 1) return empIndex;
+  if (!empSh || empSh.getLastRow() <= 1) {
+    Logger.log('WARNING: Employees Mapped sheet not found or empty');
+    return empIndex;
+  }
+  
+  // Build active status map from Base Data
+  const activeStatusMap = new Map();
+  if (baseSh && baseSh.getLastRow() > 1) {
+    const baseVals = baseSh.getDataRange().getValues();
+    const baseHead = baseVals[0].map(h => String(h || ''));
+    const iBaseEmpID = baseHead.findIndex(h => /Emp.*ID|Employee.*ID/i.test(h));
+    const iBaseActive = baseHead.findIndex(h => /Active.*Inactive/i.test(h));
+    
+    if (iBaseEmpID >= 0 && iBaseActive >= 0) {
+      for (let r = 1; r < baseVals.length; r++) {
+        const empID = String(baseVals[r][iBaseEmpID] || '').trim();
+        const activeStatus = String(baseVals[r][iBaseActive] || '').toLowerCase();
+        if (empID) {
+          activeStatusMap.set(empID, activeStatus === 'active');
+        }
+      }
+    }
+  }
   
   // Build performance map ONCE
   const perfMap = new Map();
@@ -4899,29 +4953,53 @@ function _preIndexEmployeesForCR_() {
         const rating = String(row[iPerfRating] || '').trim();
         if (empID) perfMap.set(empID, rating);
       });
+      Logger.log(`Built performance map: ${perfMap.size} employees with ratings`);
     }
   }
   
-  // Read employees ONCE
-  const empVals = empSh.getRange(2,1,empSh.getLastRow()-1,15).getValues();
-  const execMap = _getExecDescMap_();
+  // Read employees ONCE - 19 columns from Employees Mapped
+  const empVals = empSh.getRange(2,1,empSh.getLastRow()-1,19).getValues();
   const cutoffDate = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000);
   
+  let processedCount = 0;
+  let skippedInactive = 0;
+  let newHireDebugCount = 0;
+  
   empVals.forEach(row => {
-    const empID = String(row[0] || '').trim();
-    const aonCode = String(row[5] || '').trim();
-    const empLevel = String(row[7] || '').trim(); // Column H
-    const empSite = String(row[4] || '').trim();
-    const status = String(row[10] || '').trim(); // Column K
-    const salary = row[11]; // Column L
-    const startDate = row[12]; // Column M
+    // Employees Mapped columns (19 total): 
+    // A: Employee ID, B: Name, C: Job Title, D: Department, E: Site
+    // F: Aon Code, G: Job Family (Exec Description), H: Level, I: Full Aon Code, J: Mapping Override
+    // K: Confidence, L: Source, M: Status, N: Base Salary, O: Start Date
+    // P: Recent Promotion, Q: Level Anomaly, R: Title Anomaly, S: Market Data Missing
+    const empID = String(row[0] || '').trim();        // Column A
+    const empSite = String(row[4] || '').trim();      // Column E
+    const aonCode = String(row[5] || '').trim();      // Column F
+    const empLevel = String(row[7] || '').trim();     // Column H
+    const fullAonCode = String(row[8] || '').trim();  // Column I: Full Aon Code (e.g., EN.SODE.P3)
+    const status = String(row[12] || '').trim();      // Column M: Status
+    const salary = row[13];                           // Column N: Base Salary
+    const startDate = row[14];                        // Column O: Start Date
     
-    if (status !== 'Approved' || !salary || isNaN(salary) || salary <= 0) return;
+    // CRITICAL: Only include ACTIVE employees (same filter as internal stats)
+    const isActive = activeStatusMap.get(empID);
+    if (!isActive) {
+      skippedInactive++;
+      return;
+    }
     
-    const empFamily = execMap.get(aonCode) || '';
-    if (!empFamily) return;
+    // Skip if status is not Approved or Legacy
+    if ((status !== 'Approved' && status !== 'Legacy') || !salary || isNaN(salary) || salary <= 0) return;
     
-    const key = `${empSite}|${empFamily}|${empLevel}`;
+    // Skip if no Full Aon Code
+    if (!fullAonCode || !empLevel) return;
+    
+    // Normalize region (US → USA for consistency with internal stats)
+    const normSite = empSite === 'US' ? 'USA' : (empSite === 'USA' ? 'USA' : (empSite === 'India' ? 'India' : (empSite === 'UK' ? 'UK' : empSite)));
+    
+    // Key format: ${region}|${fullAonCode} (e.g., "USA|EN.SODE.P3")
+    // This is the complete identifier for a job level (includes family + level token)
+    // Key format: ${region}|${fullAonCode} (e.g., "USA|EN.SODE.P5")
+    const key = `${normSite}|${fullAonCode}`;
     
     if (!empIndex.has(key)) {
       empIndex.set(key, {
@@ -4939,15 +5017,38 @@ function _preIndexEmployeesForCR_() {
     if (rating === 'HH') group.ttSalaries.push(salary);
     if (rating === 'ML' || rating === 'NI') group.btSalaries.push(salary);
     
+    // New Hire CR: Check if hired in last 365 days
     if (startDate) {
       const startDateObj = startDate instanceof Date ? startDate : new Date(startDate);
-      if (startDateObj >= cutoffDate) {
-        group.nhSalaries.push(salary);
+      
+      // Validate date is valid
+      if (startDateObj && !isNaN(startDateObj.getTime())) {
+        if (startDateObj >= cutoffDate) {
+          group.nhSalaries.push(salary);
+          
+          // Debug: Log first 5 new hires
+          if (newHireDebugCount < 5) {
+            const daysAgo = Math.floor((Date.now() - startDateObj.getTime()) / (1000 * 60 * 60 * 24));
+            Logger.log(`New Hire: EmpID=${empID}, StartDate=${startDateObj.toISOString().split('T')[0]}, DaysAgo=${daysAgo}, Salary=${salary}, Key=${key}`);
+            newHireDebugCount++;
+          }
+        }
       }
     }
+    
+    processedCount++;
   });
   
-  Logger.log(`Pre-indexed ${empIndex.size} employee groups`);
+  // Count total new hires across all groups
+  let totalNewHires = 0;
+  empIndex.forEach(group => {
+    totalNewHires += group.nhSalaries.length;
+  });
+  
+  Logger.log(`Pre-indexed ${empIndex.size} employee groups for CR calculations`);
+  Logger.log(`Skipped ${skippedInactive} inactive employees (same filter as internal stats)`);
+  Logger.log(`New Hire CR: Found ${totalNewHires} total employees hired in last 365 days (cutoff: ${cutoffDate.toISOString().split('T')[0]})`);
+  
   return empIndex;
 }
 
