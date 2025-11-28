@@ -3734,7 +3734,7 @@ function updateLegacyMappingsFromApproved_() {
   }
   
   // Get all approved mappings from Employees Mapped
-  const empVals = empSh.getRange(2,1,empSh.getLastRow()-1,15).getValues();
+  const empVals = empSh.getRange(2,1,empSh.getLastRow()-1,16).getValues();
   const approvedMappings = new Map(); // empID → {jobFamily, fullMapping}
   
   let approvedCount = 0;
@@ -4554,9 +4554,9 @@ function syncEmployeesMappedSheet_() {
   
   // Write to sheet
   SpreadsheetApp.getActive().toast('Writing data (3/3)...', 'Employee Mapping', 3);
-  empSh.getRange(2,1,Math.max(1, empSh.getMaxRows()-1),15).clearContent();
+  empSh.getRange(2,1,Math.max(1, empSh.getMaxRows()-1),16).clearContent();
   if (rows.length) {
-    empSh.getRange(2,1,rows.length,15).setValues(rows);
+    empSh.getRange(2,1,rows.length,16).setValues(rows);
     
     // Add data validation for Status column (K)
     const statusRule = SpreadsheetApp.newDataValidation()
@@ -5183,7 +5183,7 @@ function _preIndexEmployeesForCR_() {
   }
   
   // Read employees ONCE
-  const empVals = empSh.getRange(2,1,empSh.getLastRow()-1,15).getValues();
+  const empVals = empSh.getRange(2,1,empSh.getLastRow()-1,16).getValues();
   const execMap = _getExecDescMap_();
   const cutoffDate = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000);
   
