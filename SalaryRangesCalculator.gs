@@ -1380,16 +1380,16 @@ function _buildInternalIndex_() {
   Logger.log(`Reading internal stats from Employees Mapped sheet: ${values.length} employees`);
   
   // Employees Mapped columns (19 total): 
-  // A: Employee ID, B: Name, C: Job Title, D: Department, E: Site
+  // A: Employee ID, B: Employee Name, C: Job Title, D: Department, E: Site
   // F: Aon Code, G: Job Family (Exec Description), H: Level, I: Full Aon Code, J: Mapping Override
   // K: Confidence, L: Source, M: Status, N: Base Salary, O: Start Date
   // P: Recent Promotion, Q: Level Anomaly, R: Title Anomaly, S: Market Data Missing
   const iEmpID = 0;     // Column A: Employee ID
   const iSite = 4;      // Column E: Site
-  const iAonCode = 5;   // Column F: Aon Code
-  const iLevel = 7;     // Column H: Level
-  const iStatus = 12;   // Column M: Status (FIXED: was 10 = K = Confidence!)
-  const iSalary = 13;   // Column N: Base Salary (FIXED: was 11 = L = Source!)
+  const iAonCode = 5;   // Column F: Aon Code (base, e.g., "EN.SODE")
+  const iLevel = 7;     // Column H: Level (e.g., "L5 IC")
+  const iStatus = 12;   // Column M: Status
+  const iSalary = 13;   // Column N: Base Salary
 
   const buckets = new Map();
   let processedCount = 0;
@@ -4967,15 +4967,13 @@ function _preIndexEmployeesForCR_() {
   
   empVals.forEach(row => {
     // Employees Mapped columns (19 total): 
-    // A: Employee ID, B: Name, C: Job Title, D: Department, E: Site
+    // A: Employee ID, B: Employee Name, C: Job Title, D: Department, E: Site
     // F: Aon Code, G: Job Family (Exec Description), H: Level, I: Full Aon Code, J: Mapping Override
     // K: Confidence, L: Source, M: Status, N: Base Salary, O: Start Date
     // P: Recent Promotion, Q: Level Anomaly, R: Title Anomaly, S: Market Data Missing
-    const empID = String(row[0] || '').trim();        // Column A
-    const empSite = String(row[4] || '').trim();      // Column E
-    const aonCode = String(row[5] || '').trim();      // Column F
-    const empLevel = String(row[7] || '').trim();     // Column H
-    const fullAonCode = String(row[8] || '').trim();  // Column I: Full Aon Code (e.g., EN.SODE.P3)
+    const empID = String(row[0] || '').trim();        // Column A: Employee ID
+    const empSite = String(row[4] || '').trim();      // Column E: Site
+    const fullAonCode = String(row[8] || '').trim();  // Column I: Full Aon Code (e.g., EN.SODE.P5)
     const status = String(row[12] || '').trim();      // Column M: Status
     const salary = row[13];                           // Column N: Base Salary
     const startDate = row[14];                        // Column O: Start Date
@@ -4991,15 +4989,15 @@ function _preIndexEmployeesForCR_() {
     if ((status !== 'Approved' && status !== 'Legacy') || !salary || isNaN(salary) || salary <= 0) return;
     
     // Skip if no Full Aon Code
-    if (!fullAonCode || !empLevel) return;
+    if (!fullAonCode) return;
     
     // Normalize region (US → USA for consistency with internal stats)
     const normSite = empSite === 'US' ? 'USA' : (empSite === 'USA' ? 'USA' : (empSite === 'India' ? 'India' : (empSite === 'UK' ? 'UK' : empSite)));
     
-    // Key format: ${region}|${fullAonCode} (e.g., "USA|EN.SODE.P3")
-    // This is the complete identifier for a job level (includes family + level token)
     // Key format: ${region}|${fullAonCode} (e.g., "USA|EN.SODE.P5")
     const key = `${normSite}|${fullAonCode}`;
+    
+    processedCount++;
     
     if (!empIndex.has(key)) {
       empIndex.set(key, {
@@ -5035,8 +5033,6 @@ function _preIndexEmployeesForCR_() {
         }
       }
     }
-    
-    processedCount++;
   });
   
   // Count total new hires across all groups
