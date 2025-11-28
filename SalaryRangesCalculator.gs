@@ -4263,6 +4263,7 @@ function syncEmployeesMappedSheet_() {
   const rows = [];
   let legacyCount = 0, titleBasedCount = 0, needsReviewCount = 0, approvedCount = 0;
   let filteredCount = 0; // Track employees filtered out (old exits)
+  let processedCount = 0; // Track for debug logging
   
   for (let r = 1; r < baseVals.length; r++) {
     const row = baseVals[r];
@@ -4427,8 +4428,9 @@ function syncEmployeesMappedSheet_() {
       const isHalfLevel = ciqLevel.includes('.5');
       
       if (isHalfLevel) {
-        // For .5 levels, check if BOTH preceding and succeeding levels have market data
-        // Extract base level (e.g., "L5.5 IC" → "L5 IC" and "L6 IC")
+        // For .5 levels, check if BOTH preceding and succeeding FULL AON CODES have market data
+        // Example: L5.5 IC with EN.SODE needs EN.SODE.P5 AND EN.SODE.P6
+        // Example: L6.5 Mgr with HR.GLMF needs HR.GLMF.M6 AND HR.GLMF.E1
         const levelMatch = ciqLevel.match(/L(\d+)\.5\s+(IC|Mgr)/);
         if (levelMatch) {
           const baseNum = parseInt(levelMatch[1]);
@@ -4436,11 +4438,26 @@ function syncEmployeesMappedSheet_() {
           const precedingLevel = `L${baseNum} ${levelType}`;
           const succeedingLevel = `L${baseNum + 1} ${levelType}`;
           
+          // Build FULL Aon Codes for surrounding levels
+          const precedingToken = _ciqLevelToToken_(precedingLevel);
+          const succeedingToken = _ciqLevelToToken_(succeedingLevel);
+          
+          const precedingFullCode = precedingToken ? `${aonCode}.${precedingToken}` : '';
+          const succeedingFullCode = succeedingToken ? `${aonCode}.${succeedingToken}` : '';
+          
+          // Check in Aon cache using the FULL codes
           const precedingKey = `${normSite}|${aonCode}|${precedingLevel}`;
           const succeedingKey = `${normSite}|${aonCode}|${succeedingLevel}`;
           
           const hasPreceding = aonCache.has(precedingKey);
           const hasSucceeding = aonCache.has(succeedingKey);
+          
+          // DEBUG: Log first mismatch for .5 levels
+          if ((!hasPreceding || !hasSucceeding) && processedCount <= 5) {
+            Logger.log(`[.5 Level] ${empID} (${ciqLevel}): ${aonCode}`);
+            Logger.log(`  Preceding: ${precedingLevel} (${precedingFullCode}) → key=${precedingKey} exists=${hasPreceding}`);
+            Logger.log(`  Succeeding: ${succeedingLevel} (${succeedingFullCode}) → key=${succeedingKey} exists=${hasSucceeding}`);
+          }
           
           if (!hasPreceding && !hasSucceeding) {
             marketDataMissing = `No data for ${precedingLevel} or ${succeedingLevel}`;
@@ -4456,12 +4473,19 @@ function syncEmployeesMappedSheet_() {
         const aonKey = `${normSite}|${aonCode}|${ciqLevel}`;
         if (!aonCache.has(aonKey)) {
           marketDataMissing = `No ${normSite} data`;
+          
+          // DEBUG: Log first 5 mismatches for regular levels
+          if (processedCount <= 5) {
+            Logger.log(`[Regular Level Check] ${empID}: key=${aonKey} NOT found in Aon cache`);
+          }
         }
       }
     }
     
     // Column T: Active/Inactive status (from Base Data)
     const activeStatusText = activeStatus.toLowerCase() === 'active' ? 'Active' : 'Inactive';
+    
+    processedCount++;
     
     rows.push([empID, name, title, dept, site, aonCode, jobFamilyDesc, ciqLevel, fullAonCode, mappingOverride, confidence, source, status, salary, startDate, recentPromotion, levelAnomaly, titleAnomaly, marketDataMissing, activeStatusText]);
   }
@@ -5028,8 +5052,13 @@ function _preloadAonData_() {
       });
       
       rowCount++;
-      if (rowCount <= 3) {
-        Logger.log(`Sample: ${jobCode} → ${family}, ${ciqLevel}, P25=${row[colP25]}, P625=${row[colP625]}`);
+      if (rowCount <= 5) {
+        Logger.log(`[Aon Load] ${region}: ${jobCode} → family=${family}, level=${ciqLevel}, key="${key}"`);
+      }
+      
+      // DEBUG: Log E1, E3, P7 entries
+      if (levelToken === 'E1' || levelToken === 'E3' || levelToken === 'P7') {
+        Logger.log(`[Executive/P7 Level Found] ${region}: ${jobCode} → level=${ciqLevel}, key="${key}"`);
       }
     }
     
