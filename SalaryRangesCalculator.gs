@@ -6528,6 +6528,14 @@ function applyRangeCorrections() {
   // Read issues sheet
   const issuesData = issuesSheet.getDataRange().getValues();
   
+  if (issuesData.length < 2) {
+    ui.alert('❌ Error', 
+      'Range Progression Issues sheet appears to be empty.\n\n' +
+      'Please run "Tools → Review Range Progression" first.',
+      ui.ButtonSet.OK);
+    return;
+  }
+  
   // Find instruction row (first row is instructions)
   let headerRow = 1;
   if (issuesData[0][0] && issuesData[0][0].toString().includes('INSTRUCTIONS')) {
@@ -6537,6 +6545,17 @@ function applyRangeCorrections() {
   const issuesHeaders = issuesData[headerRow - 1];
   const issuesColIdx = {};
   issuesHeaders.forEach((h, i) => { issuesColIdx[h] = i; });
+  
+  // Validate required columns exist
+  const requiredCols = ['Region', 'Job Family', 'Level', 'Metric', 'Recommended Value', 'Status'];
+  const missingCols = requiredCols.filter(col => issuesColIdx[col] === undefined);
+  if (missingCols.length > 0) {
+    ui.alert('❌ Error', 
+      `Missing required columns in Range Progression Issues sheet: ${missingCols.join(', ')}\n\n` +
+      'Please run "Tools → Review Range Progression" again to recreate the sheet.',
+      ui.ButtonSet.OK);
+    return;
+  }
   
   // Find approved corrections
   const approvedCorrections = [];
@@ -6636,7 +6655,7 @@ function applyRangeCorrections() {
   // Mark applied corrections as "Applied" in issues sheet
   for (const correction of approvedCorrections) {
     issuesSheet.getRange(correction.issueRow, issuesColIdx['Status'] + 1).setValue('Applied');
-    issuesSheet.getRange(correction.issueRow, 1, 1, issueHeaders.length).setBackground('#d4edda');  // Green
+    issuesSheet.getRange(correction.issueRow, 1, 1, issuesHeaders.length).setBackground('#d4edda');  // Green
   }
   
   ui.alert('✅ Range Corrections Applied', 
