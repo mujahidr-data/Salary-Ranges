@@ -5973,6 +5973,92 @@ function migrateHalfLevelAonCodes() {
   SpreadsheetApp.getActive().toast('✅ Migration complete!', '', 5);
 }
 
+/**
+ * Hides all backend/data sheets, showing only the two calculator sheets
+ * Useful for clean presentation/demo mode
+ */
+function hideBackendSheets() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+  
+  const response = ui.alert(
+    '👁️ Hide Backend Sheets',
+    'This will hide all data sheets, showing only the calculators:\n\n' +
+    '✅ Visible:\n' +
+    '  • Salary Ranges (X0)\n' +
+    '  • Salary Ranges (Y1)\n\n' +
+    '🔒 Hidden:\n' +
+    '  • All Aon data sheets\n' +
+    '  • All employee/mapping sheets\n' +
+    '  • Full List sheets\n' +
+    '  • All other backend sheets\n\n' +
+    'Use "Show All Sheets" to unhide them.\n\n' +
+    'Continue?',
+    ui.ButtonSet.YES_NO
+  );
+  
+  if (response !== ui.Button.YES) return;
+  
+  const calculatorSheets = ['Salary Ranges (X0)', 'Salary Ranges (Y1)'];
+  const sheets = ss.getSheets();
+  let hiddenCount = 0;
+  
+  sheets.forEach(sheet => {
+    const sheetName = sheet.getName();
+    // Only hide sheets that are NOT calculators
+    if (!calculatorSheets.includes(sheetName)) {
+      sheet.hideSheet();
+      hiddenCount++;
+    }
+  });
+  
+  ui.alert(
+    '✅ Backend Sheets Hidden',
+    `Hidden ${hiddenCount} sheet(s).\n\n` +
+    'Only calculator sheets are now visible.\n\n' +
+    'To unhide: Tools → 👁️ Show All Sheets',
+    ui.ButtonSet.OK
+  );
+  
+  SpreadsheetApp.getActive().toast(`✅ Hidden ${hiddenCount} backend sheets`, '', 3);
+}
+
+/**
+ * Shows all hidden sheets
+ * Restores full access to all data and backend sheets
+ */
+function showAllSheets() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+  
+  const sheets = ss.getSheets();
+  let unhiddenCount = 0;
+  
+  sheets.forEach(sheet => {
+    if (sheet.isSheetHidden()) {
+      sheet.showSheet();
+      unhiddenCount++;
+    }
+  });
+  
+  if (unhiddenCount === 0) {
+    ui.alert(
+      'ℹ️ All Sheets Already Visible',
+      'No hidden sheets found.',
+      ui.ButtonSet.OK
+    );
+  } else {
+    ui.alert(
+      '✅ All Sheets Visible',
+      `Unhidden ${unhiddenCount} sheet(s).\n\n` +
+      'All backend and data sheets are now accessible.',
+      ui.ButtonSet.OK
+    );
+    
+    SpreadsheetApp.getActive().toast(`✅ Unhidden ${unhiddenCount} sheets`, '', 3);
+  }
+}
+
 function onOpen() {
   const ui = SpreadsheetApp.getUi();
   
@@ -6003,6 +6089,9 @@ function onOpen() {
     .addItem('🗑️ Clear All Caches', 'clearAllCaches_')
     .addSeparator()
     .addItem('🔄 Update Legacy Mappings from Approved', 'updateLegacyMappingsFromApproved_')
+    .addSeparator()
+    .addItem('👁️ Hide Backend Sheets', 'hideBackendSheets')
+    .addItem('👁️ Show All Sheets', 'showAllSheets')
     .addSeparator()
     .addItem('📖 Generate Help Sheet', 'buildHelpSheet_')
     .addItem('ℹ️ Quick Instructions', 'showInstructions');
