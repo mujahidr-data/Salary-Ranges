@@ -5841,6 +5841,138 @@ function rebuildBothCalculatorUIs() {
   SpreadsheetApp.getActive().toast('✅ Both calculators rebuilt successfully!', 'Complete', 5);
 }
 
+/**
+ * ONE-TIME MIGRATION: Fix Full Aon Codes for .5 levels
+ * Updates Column I for employees with L5.5/L6.5 levels
+ * Changes: HR.GL00.P6 → HR.GL00.P6.5 for L6.5 IC employees
+ */
+function migrateHalfLevelAonCodes() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+  
+  // Confirm with user
+  const response = ui.alert(
+    '🔧 Migrate .5 Level Aon Codes',
+    'This will update Full Aon Code (Column I) for all employees with .5 levels.\n\n' +
+    'Example changes:\n' +
+    '• L6.5 IC: HR.GL00.P6 → HR.GL00.P6.5\n' +
+    '• L5.5 Mgr: HR.GL00.M5 → HR.GL00.M5.5\n\n' +
+    'This is a ONE-TIME migration needed after v4.38.0.\n\n' +
+    'Continue?',
+    ui.ButtonSet.YES_NO
+  );
+  
+  if (response !== ui.Button.YES) return;
+  
+  const empSheet = ss.getSheetByName('Employees Mapped');
+  if (!empSheet) {
+    ui.alert('❌ Error', 'Employees Mapped sheet not found.', ui.ButtonSet.OK);
+    return;
+  }
+  
+  SpreadsheetApp.getActive().toast('Reading employee data...', 'Migration', -1);
+  
+  const data = empSheet.getDataRange().getValues();
+  if (data.length < 2) {
+    ui.alert('ℹ️ No Data', 'Employees Mapped sheet is empty.', ui.ButtonSet.OK);
+    return;
+  }
+  
+  const headers = data[0];
+  const iAonCode = 5;      // Column F: Aon Code
+  const iLevel = 7;        // Column H: Level
+  const iFullAonCode = 8;  // Column I: Full Aon Code
+  
+  let updatedCount = 0;
+  const updates = [];
+  
+  // Process each employee
+  for (let r = 1; r < data.length; r++) {
+    const row = data[r];
+    const aonCode = String(row[iAonCode] || '').trim();
+    const level = String(row[iLevel] || '').trim();
+    const currentFullAonCode = String(row[iFullAonCode] || '').trim();
+    
+    // Skip if no aonCode or level
+    if (!aonCode || !level) continue;
+    
+    // Check if this is a .5 level
+    if (level.includes('.5')) {
+      // Generate the correct Full Aon Code using new token logic
+      const levelToken = _ciqLevelToToken_(level);
+      const correctFullAonCode = levelToken ? `${aonCode}.${levelToken}` : '';
+      
+      // Only update if it's different from current value
+      if (correctFullAonCode && correctFullAonCode !== currentFullAonCode) {
+        updates.push({
+          row: r + 1,  // 1-based row number
+          oldValue: currentFullAonCode || '(blank)',
+          newValue: correctFullAonCode,
+          level: level,
+          aonCode: aonCode
+        });
+        updatedCount++;
+      }
+    }
+  }
+  
+  if (updatedCount === 0) {
+    ui.alert(
+      '✅ No Updates Needed',
+      'All .5 level employees already have correct Full Aon Codes.\n\n' +
+      'Either:\n' +
+      '• Migration already completed\n' +
+      '• No employees with .5 levels exist',
+      ui.ButtonSet.OK
+    );
+    return;
+  }
+  
+  // Show preview and confirm
+  let previewText = `Found ${updatedCount} employee(s) to update:\n\n`;
+  const previewLimit = Math.min(5, updates.length);
+  for (let i = 0; i < previewLimit; i++) {
+    const u = updates[i];
+    previewText += `Row ${u.row}: ${u.level} | ${u.oldValue} → ${u.newValue}\n`;
+  }
+  if (updates.length > previewLimit) {
+    previewText += `\n...and ${updates.length - previewLimit} more\n`;
+  }
+  previewText += '\nApply these changes?';
+  
+  const confirmResponse = ui.alert('🔍 Preview Changes', previewText, ui.ButtonSet.YES_NO);
+  if (confirmResponse !== ui.Button.YES) {
+    ui.alert('Cancelled', 'No changes were made.', ui.ButtonSet.OK);
+    return;
+  }
+  
+  // Apply updates
+  SpreadsheetApp.getActive().toast(`Updating ${updatedCount} Full Aon Codes...`, 'Migration', -1);
+  
+  for (const update of updates) {
+    empSheet.getRange(update.row, iFullAonCode + 1).setValue(update.newValue);
+  }
+  
+  // Log changes
+  Logger.log(`=== MIGRATION COMPLETE ===`);
+  Logger.log(`Updated ${updatedCount} Full Aon Codes for .5 level employees`);
+  updates.forEach(u => {
+    Logger.log(`Row ${u.row}: ${u.level} | ${u.aonCode} | ${u.oldValue} → ${u.newValue}`);
+  });
+  
+  ui.alert(
+    '✅ Migration Complete!',
+    `Successfully updated ${updatedCount} Full Aon Code(s).\n\n` +
+    'Next steps:\n' +
+    '1. Review Column I (Full Aon Code) in Employees Mapped\n' +
+    '2. Run: 📊 Build Market Data\n' +
+    '3. Verify employee counts for .5 levels in Full List',
+    ui.ButtonSet.OK
+  );
+  
+  SpreadsheetApp.getActive().toast('✅ Migration complete!', '', 5);
+}
+
 function onOpen() {
   const ui = SpreadsheetApp.getUi();
   
@@ -5858,6 +5990,8 @@ function onOpen() {
   const toolsMenu = ui.createMenu('🔧 Tools')
     .addItem('⏰ Import Bob Data (Headless)', 'importBobDataHeadless')
     .addItem('🔔 Setup Daily Import Trigger', 'setupDailyImportTrigger')
+    .addSeparator()
+    .addItem('🔄 Migrate .5 Level Aon Codes (One-Time)', 'migrateHalfLevelAonCodes')
     .addSeparator()
     .addItem('🔍 Review Range Progression', 'reviewRangeProgression')
     .addItem('✅ Apply Range Corrections', 'applyRangeCorrections')
