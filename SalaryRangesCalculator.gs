@@ -3766,13 +3766,15 @@ function _parseLevelToken_(token) {
   if (letter === 'P') return `L${num} IC`;
   if (letter === 'M') return `L${num} Mgr`;
   if (letter === 'E') {
-    // Executive mapping
-    if (num === 1) return 'L9 Mgr';
-    if (num === 2) return 'L8 Mgr';
-    if (num === 3) return 'L7 Mgr';
-    if (num === 4) return 'L6.5 Mgr';
-    if (num === 5) return 'L6 Mgr';
-    if (num === 6) return 'L5.5 Mgr';
+    // Executive mapping (per user specification)
+    // E1 = VP = L7 Mgr
+    // E3 = SVP = L8 Mgr
+    // E5 = C-Suite = L9 Mgr
+    // E6 = CEO = L10+ Mgr
+    if (num === 1) return 'L7 Mgr';
+    if (num === 3) return 'L8 Mgr';
+    if (num === 5) return 'L9 Mgr';
+    if (num === 6) return 'L10+ Mgr';
   }
   return '';
 }
