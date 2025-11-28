@@ -121,6 +121,22 @@ function normalizeString(s) {
 }
 
 /**
+ * Auto-resize columns in a sheet, but skip calculator sheets (user manually formats those)
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet - Sheet to auto-resize
+ * @param {number} startColumn - Starting column (1-based)
+ * @param {number} numColumns - Number of columns to resize
+ */
+function autoResizeColumnsIfNotCalculator(sheet, startColumn, numColumns) {
+  const sheetName = sheet.getName();
+  // Skip calculator sheets - user manually formats these
+  if (sheetName.toLowerCase().includes('calculator')) {
+    Logger.log(`Skipping auto-resize for calculator sheet: ${sheetName}`);
+    return;
+  }
+  sheet.autoResizeColumns(startColumn, numColumns);
+}
+
+/**
  * Find column index by trying multiple header aliases (case-insensitive)
  * @param {Array} headerRow - The header row array
  * @param {Array<string>} aliases - Array of possible column names
@@ -2168,11 +2184,11 @@ function buildCalculatorUI_() {
     formulasRangeEnd.push([`=IF($B$4="Local", XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$P:$P,""), XLOOKUP($B$2&$A${aRow}&$B$3,'Full List USD'!$Y:$Y,'Full List USD'!$P:$P,""))`]);
     
     // Internal stats (Column Q=Internal Min, R=Median, S=Max, T=Emp Count)
-    // FIX: KEY is in Column Y, not U!
-    formulasIntMin.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$Q:$Q,"")`]);
-    formulasIntMed.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$R:$R,"")`]);
-    formulasIntMax.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$S:$S,"")`]);
-    formulasIntCount.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$T:$T,"")`]);
+    // Currency-aware: Switch between Full List (local) and Full List USD
+    formulasIntMin.push([`=IF($B$4="Local", XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$Q:$Q,""), XLOOKUP($B$2&$A${aRow}&$B$3,'Full List USD'!$Y:$Y,'Full List USD'!$Q:$Q,""))`]);
+    formulasIntMed.push([`=IF($B$4="Local", XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$R:$R,""), XLOOKUP($B$2&$A${aRow}&$B$3,'Full List USD'!$Y:$Y,'Full List USD'!$R:$R,""))`]);
+    formulasIntMax.push([`=IF($B$4="Local", XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$S:$S,""), XLOOKUP($B$2&$A${aRow}&$B$3,'Full List USD'!$Y:$Y,'Full List USD'!$S:$S,""))`]);
+    formulasIntCount.push([`=IF($B$4="Local", XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$T:$T,""), XLOOKUP($B$2&$A${aRow}&$B$3,'Full List USD'!$Y:$Y,'Full List USD'!$T:$T,""))`]);
     
     // Compa Ratio columns - XLOOKUP from Full List (pre-calculated)
     // Column Y = Key, Column U = Avg CR, Column V = TT CR, Column W = New Hire CR, Column X = BT CR
@@ -3964,11 +3980,11 @@ function buildCalculatorUIForY1_() {
     formulasRangeEnd.push([`=IF($B$4="Local", XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$P:$P,""), XLOOKUP($B$2&$A${aRow}&$B$3,'Full List USD'!$Y:$Y,'Full List USD'!$P:$P,""))`]);
     
     // Internal stats (Column Q=Internal Min, R=Median, S=Max, T=Emp Count)
-    // FIX: KEY is in Column Y, not U!
-    formulasIntMin.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$Q:$Q,"")`]);
-    formulasIntMed.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$R:$R,"")`]);
-    formulasIntMax.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$S:$S,"")`]);
-    formulasIntCount.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$T:$T,"")`]);
+    // Currency-aware: Switch between Full List (local) and Full List USD
+    formulasIntMin.push([`=IF($B$4="Local", XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$Q:$Q,""), XLOOKUP($B$2&$A${aRow}&$B$3,'Full List USD'!$Y:$Y,'Full List USD'!$Q:$Q,""))`]);
+    formulasIntMed.push([`=IF($B$4="Local", XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$R:$R,""), XLOOKUP($B$2&$A${aRow}&$B$3,'Full List USD'!$Y:$Y,'Full List USD'!$R:$R,""))`]);
+    formulasIntMax.push([`=IF($B$4="Local", XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$S:$S,""), XLOOKUP($B$2&$A${aRow}&$B$3,'Full List USD'!$Y:$Y,'Full List USD'!$S:$S,""))`]);
+    formulasIntCount.push([`=IF($B$4="Local", XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$T:$T,""), XLOOKUP($B$2&$A${aRow}&$B$3,'Full List USD'!$Y:$Y,'Full List USD'!$T:$T,""))`]);
     
     // CR columns - XLOOKUP from Full List (pre-calculated)
     formulasAvgCR.push([`=XLOOKUP($B$2&$A${aRow}&$B$3,'Full List'!$Y:$Y,'Full List'!$U:$U,"")`]);
@@ -4364,7 +4380,7 @@ function syncEmployeesMappedSheet_() {
     Logger.log(`Skipped conditional formatting (${existingRules.length} rules already present)`);
   }
   
-  empSh.autoResizeColumns(1,15);
+  autoResizeColumnsIfNotCalculator(empSh, 1, 19);
   
   const totalProcessed = rows.length + filteredCount;
   const msg = `✅ Synced ${rows.length} employees (${filteredCount} old exits filtered):\n` +
@@ -5016,18 +5032,35 @@ function rebuildFullListAllCombinations_() {
         // Key format: JobFamily+Level+Region (for calculator XLOOKUP)
         const key = `${execDesc}${ciqLevel}${region}`;
         
-        // Determine range start/mid/end based on category
+        // Helper: Round currency based on region
+        const roundCurrency = (value, region) => {
+          if (!value || value === '') return '';
+          const num = toNumber(value);
+          if (!num) return '';
+          
+          // India: Round to nearest 1,000
+          if (region === 'India') {
+            return Math.round(num / 1000) * 1000;
+          }
+          // US/UK: Round to nearest 100
+          else if (region === 'US' || region === 'UK') {
+            return Math.round(num / 100) * 100;
+          }
+          return num;
+        };
+        
+        // Determine range start/mid/end based on category, then round by region
         let rangeStart, rangeMid, rangeEnd;
         if (category === 'X0') {
           // X0: P25 → P62.5 → P90
-          rangeStart = toNumber(p25) || toNumber(p40) || toNumber(p50) || '';
-          rangeMid = toNumber(p625) || toNumber(p75) || toNumber(p90) || '';
-          rangeEnd = toNumber(p90) || '';
+          rangeStart = roundCurrency(toNumber(p25) || toNumber(p40) || toNumber(p50) || '', region);
+          rangeMid = roundCurrency(toNumber(p625) || toNumber(p75) || toNumber(p90) || '', region);
+          rangeEnd = roundCurrency(toNumber(p90) || '', region);
         } else {
           // Y1: P10 → P40 → P62.5
-          rangeStart = toNumber(p10) || toNumber(p25) || toNumber(p40) || '';
-          rangeMid = toNumber(p40) || toNumber(p50) || toNumber(p625) || '';
-          rangeEnd = toNumber(p625) || toNumber(p75) || toNumber(p90) || '';
+          rangeStart = roundCurrency(toNumber(p10) || toNumber(p25) || toNumber(p40) || '', region);
+          rangeMid = roundCurrency(toNumber(p40) || toNumber(p50) || toNumber(p625) || '', region);
+          rangeEnd = roundCurrency(toNumber(p625) || toNumber(p75) || toNumber(p90) || '', region);
         }
         
         // OPTIMIZED: Calculate CR values from pre-indexed employee groups (instant lookup!)
@@ -5084,16 +5117,16 @@ function rebuildFullListAllCombinations_() {
           execDesc,     // Job Family (Exec)
           category,     // Category
           ciqLevel,     // CIQ Level
-          toNumber(p10) || '',
-          toNumber(p25) || '',
-          toNumber(p40) || '',
-          toNumber(p50) || '',
-          toNumber(p625) || '',
-          toNumber(p75) || '',
-          toNumber(p90) || '',
-          rangeStart,   // Range Start (P25 for X0, P10 for Y1)
-          rangeMid,     // Range Mid (P62.5 for X0, P40 for Y1)
-          rangeEnd,     // Range End (P90 for X0, P62.5 for Y1)
+          roundCurrency(p10, region),   // P10 (rounded)
+          roundCurrency(p25, region),   // P25 (rounded)
+          roundCurrency(p40, region),   // P40 (rounded)
+          roundCurrency(p50, region),   // P50 (rounded)
+          roundCurrency(p625, region),  // P62.5 (rounded)
+          roundCurrency(p75, region),   // P75 (rounded)
+          roundCurrency(p90, region),   // P90 (rounded)
+          rangeStart,   // Range Start (P25 for X0, P10 for Y1) - already rounded
+          rangeMid,     // Range Mid (P62.5 for X0, P40 for Y1) - already rounded
+          rangeEnd,     // Range End (P90 for X0, P62.5 for Y1) - already rounded
           intStats.min,
           intStats.med,
           intStats.max,
@@ -5127,7 +5160,7 @@ function rebuildFullListAllCombinations_() {
     fullListSh.getRange(2,1,rows.length,25).setValues(rows);
   }
   
-  fullListSh.autoResizeColumns(1,25);
+  autoResizeColumnsIfNotCalculator(fullListSh, 1, 25);
   
   // Clear cache
   CacheService.getDocumentCache().removeAll(['MAP:FULL_LIST']);
