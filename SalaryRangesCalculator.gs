@@ -14,7 +14,7 @@
  * - Persistent legacy mapping storage
  * - Interactive calculator UI
  * 
- * @version 4.21.0
+ * @version 4.22.0
  * @date 2025-11-28
  * @performance Highly optimized with strategic caching and batch operations:
  *   - Pre-loaded Aon data: Saves 10,080+ sheet reads (~95% faster market data build)
@@ -25,15 +25,17 @@
  *   - Legacy mappings batch load: Saves 600+ lookups (~90% faster mapping resolution)
  *   - Pre-indexed CR groups: ~98% faster CR calculations (Map-based grouping)
  *   - Reduced sleep timers: 500ms→300ms, 1000ms→500ms (~40% faster workflows)
- * @changelog v4.21.0 - FEATURE: Add Rebuild Lookup Sheet menu item
+ * @changelog v4.22.0 - CRITICAL BUGFIX: Internal stats reading wrong columns
+ *   - FIXED: _buildInternalIndex_() was reading outdated column positions
+ *   - BUG: After adding new columns (Mapping Override, Recent Promotion), indices not updated
+ *   - WRONG: Reading only 13 columns (should be 19)
+ *   - WRONG: iStatus = 10 (Column K = Confidence) → FIXED: = 12 (Column M = Status)
+ *   - WRONG: iSalary = 11 (Column L = Source) → FIXED: = 13 (Column N = Base Salary)
+ *   - IMPACT: Internal Min/Median/Max/Count were calculated from WRONG data
+ *   - RESULT: Internal stats now correctly read Base Salary column
+ *   - NOTE: CR calculations (_preIndexEmployeesForCR_) were already correct
+ * @previous v4.21.0 - FEATURE: Add Rebuild Lookup Sheet menu item
  *   - NEW FUNCTION: rebuildLookupSheet() - User-facing wrapper
- *   - MENU: Advanced Tools → "🔄 Rebuild Lookup Sheet"
- *   - PURPOSE: Apply updated category mappings without Fresh Build
- *   - LOGIC: Deletes old Lookup sheet + recreates with latest mappings
- *   - CLEARS: Caches after rebuild (ensures fresh data)
- *   - UI: Confirmation dialog + success message with details
- *   - USE CASE: After code updates to categoryData array
- * @previous v4.20.0 - UPDATE: Cleanup Lookup table category mappings
  *   - CLEANED: Removed duplicate/obsolete Aon codes from hardcoded list
  *   - REMOVED: CB.0000, CB.ADEA, CB.ADAA (duplicate exec assistant/workplace codes)
  *   - REMOVED: EN.DVEX (duplicate architect code - kept EN.DVDE)
@@ -1556,17 +1558,21 @@ function _buildInternalIndex_() {
     return out;
   }
 
-  const values = empSh.getRange(2, 1, empSh.getLastRow() - 1, 13).getValues();
+  const values = empSh.getRange(2, 1, empSh.getLastRow() - 1, 19).getValues();
   
   Logger.log(`Reading internal stats from Employees Mapped sheet: ${values.length} employees`);
   
-  // Employees Mapped columns: EmpID, Name, Title, Dept, Site, AonCode, JobFamilyDesc, Level, Confidence, Source, Status, Salary, StartDate
+  // Employees Mapped columns (19 total): 
+  // A: Employee ID, B: Name, C: Job Title, D: Department, E: Site
+  // F: Aon Code, G: Job Family (Exec Description), H: Level, I: Full Aon Code, J: Mapping Override
+  // K: Confidence, L: Source, M: Status, N: Base Salary, O: Start Date
+  // P: Recent Promotion, Q: Level Anomaly, R: Title Anomaly, S: Market Data Missing
   const iEmpID = 0;     // Column A: Employee ID
   const iSite = 4;      // Column E: Site
   const iAonCode = 5;   // Column F: Aon Code
   const iLevel = 7;     // Column H: Level
-  const iStatus = 10;   // Column K: Status
-  const iSalary = 11;   // Column L: Base Salary
+  const iStatus = 12;   // Column M: Status (FIXED: was 10 = K = Confidence!)
+  const iSalary = 13;   // Column N: Base Salary (FIXED: was 11 = L = Source!)
 
   const buckets = new Map();
   let processedCount = 0;
