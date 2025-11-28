@@ -14,7 +14,7 @@
  * - Persistent legacy mapping storage
  * - Interactive calculator UI
  * 
- * @version 4.20.0
+ * @version 4.21.0
  * @date 2025-11-28
  * @performance Highly optimized with strategic caching and batch operations:
  *   - Pre-loaded Aon data: Saves 10,080+ sheet reads (~95% faster market data build)
@@ -25,7 +25,15 @@
  *   - Legacy mappings batch load: Saves 600+ lookups (~90% faster mapping resolution)
  *   - Pre-indexed CR groups: ~98% faster CR calculations (Map-based grouping)
  *   - Reduced sleep timers: 500ms→300ms, 1000ms→500ms (~40% faster workflows)
- * @changelog v4.20.0 - UPDATE: Cleanup Lookup table category mappings
+ * @changelog v4.21.0 - FEATURE: Add Rebuild Lookup Sheet menu item
+ *   - NEW FUNCTION: rebuildLookupSheet() - User-facing wrapper
+ *   - MENU: Advanced Tools → "🔄 Rebuild Lookup Sheet"
+ *   - PURPOSE: Apply updated category mappings without Fresh Build
+ *   - LOGIC: Deletes old Lookup sheet + recreates with latest mappings
+ *   - CLEARS: Caches after rebuild (ensures fresh data)
+ *   - UI: Confirmation dialog + success message with details
+ *   - USE CASE: After code updates to categoryData array
+ * @previous v4.20.0 - UPDATE: Cleanup Lookup table category mappings
  *   - CLEANED: Removed duplicate/obsolete Aon codes from hardcoded list
  *   - REMOVED: CB.0000, CB.ADEA, CB.ADAA (duplicate exec assistant/workplace codes)
  *   - REMOVED: EN.DVEX (duplicate architect code - kept EN.DVDE)
@@ -4009,7 +4017,63 @@ function _parseLevelToken_(token) {
 }
 
 /**
- * Creates comprehensive Lookup sheet with all mappings
+ * Rebuilds Lookup sheet with latest mappings (user-facing function)
+ * Use this after updating category mappings in the code
+ */
+function rebuildLookupSheet() {
+  const ui = SpreadsheetApp.getUi();
+  const response = ui.alert(
+    '🔄 Rebuild Lookup Sheet',
+    'This will recreate the Lookup sheet with the latest category mappings.\n\n' +
+    'Current mappings: 67 Aon codes (X0/Y1 categories)\n\n' +
+    'Use this after:\n' +
+    '• Code updates to category mappings\n' +
+    '• Need to refresh FX rates\n' +
+    '• Lookup sheet is corrupted\n\n' +
+    'The existing Lookup sheet will be replaced.\n\n' +
+    'Continue?',
+    ui.ButtonSet.YES_NO
+  );
+  
+  if (response !== ui.Button.YES) {
+    SpreadsheetApp.getActive().toast('Rebuild cancelled', 'Cancelled', 3);
+    return;
+  }
+  
+  try {
+    SpreadsheetApp.getActive().toast('🔄 Rebuilding Lookup sheet...', 'Rebuild Lookup', 3);
+    
+    // Delete existing Lookup sheet
+    const ss = SpreadsheetApp.getActive();
+    const existingLookup = ss.getSheetByName('Lookup');
+    if (existingLookup) {
+      ss.deleteSheet(existingLookup);
+    }
+    
+    // Create fresh Lookup sheet
+    createLookupSheet_();
+    
+    // Clear caches
+    clearAllCaches_();
+    
+    ui.alert(
+      '✅ Lookup Sheet Rebuilt!',
+      'The Lookup sheet has been recreated with the latest mappings.\n\n' +
+      '📊 UPDATED:\n' +
+      '• 67 Aon Code mappings (X0/Y1)\n' +
+      '• CIQ Level → Aon Level tokens\n' +
+      '• FX rates (US/UK/India)\n\n' +
+      '💡 Changes will be used in next Build Market Data.',
+      ui.ButtonSet.OK
+    );
+    
+  } catch (e) {
+    ui.alert('❌ Error', 'Rebuild failed: ' + e.message, ui.ButtonSet.OK);
+  }
+}
+
+/**
+ * Creates comprehensive Lookup sheet with all mappings (internal function)
  * Single source of truth for: Level mapping, Category assignment, FX rates
  */
 function createLookupSheet_() {
@@ -6165,6 +6229,7 @@ function onOpen() {
     .addItem('🤖 Import Bob Data (Headless)', 'importBobDataHeadless')
     .addSeparator()
     .addItem('🔄 Refresh Market Data Availability', 'refreshMarketDataAvailability')
+    .addItem('🔄 Rebuild Lookup Sheet', 'rebuildLookupSheet')
     .addItem('🔄 Rebuild Calculator Formulas', 'rebuildCalculatorFormulas')
     .addItem('💱 Apply Currency Format', 'applyCurrency_')
     .addItem('🗑️ Clear All Caches', 'clearAllCaches_')
