@@ -4186,6 +4186,41 @@ function syncEmployeesMappedSheet_() {
   SpreadsheetApp.getActive().toast('Loading market data...', 'Employee Mapping', 3);
   const aonCache = _preloadAonData_();
   
+  // Load Comp History for recent promotions (last 90 days)
+  SpreadsheetApp.getActive().toast('Checking promotions...', 'Employee Mapping', 3);
+  const compHistSh = ss.getSheetByName('Comp History');
+  const promotionMap = new Map(); // empID → {date, reason}
+  const promotionCutoffDate = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000); // 90 days ago
+  
+  if (compHistSh && compHistSh.getLastRow() > 1) {
+    const compHistVals = compHistSh.getDataRange().getValues();
+    const compHistHead = compHistVals[0].map(h => String(h||''));
+    const iCompEmpID = compHistHead.findIndex(h => /Emp.*ID|Employee.*ID/i.test(h));
+    const iHistReason = compHistHead.findIndex(h => /History.*reason|Reason/i.test(h));
+    const iEffDate = compHistHead.findIndex(h => /Effective.*date|Eff.*date/i.test(h));
+    
+    if (iCompEmpID >= 0 && iHistReason >= 0 && iEffDate >= 0) {
+      for (let i = 1; i < compHistVals.length; i++) {
+        const row = compHistVals[i];
+        const empID = String(row[iCompEmpID] || '').trim();
+        const reason = String(row[iHistReason] || '').toLowerCase();
+        const effDate = row[iEffDate];
+        
+        // Check if reason indicates promotion
+        if (reason && (reason.includes('promotion') || reason.includes('promoted') || reason.includes('promo'))) {
+          const effDateObj = effDate instanceof Date ? effDate : new Date(effDate);
+          if (effDateObj && !isNaN(effDateObj.getTime()) && effDateObj >= promotionCutoffDate) {
+            // Store most recent promotion for this employee
+            if (!promotionMap.has(empID) || effDateObj > promotionMap.get(empID).date) {
+              promotionMap.set(empID, {date: effDateObj, reason: row[iHistReason]});
+            }
+          }
+        }
+      }
+      Logger.log(`Found ${promotionMap.size} employees with promotions in last 90 days`);
+    }
+  }
+  
   // Build title-to-mapping suggestions inline (no separate Title Mapping sheet needed)
   SpreadsheetApp.getActive().toast('Building smart suggestions (1/3)...', 'Employee Mapping', 3);
   const titleToMappings = new Map(); // title → {aonCode|level → count}
@@ -4371,8 +4406,15 @@ function syncEmployeesMappedSheet_() {
       }
     }
     
-    // Column P: Recent Promotion (check Comp History for promotions in last 90 days - for now, blank)
+    // Column P: Recent Promotion (check Comp History for promotions in last 90 days)
     let recentPromotion = '';
+    if (promotionMap.has(empID)) {
+      const promo = promotionMap.get(empID);
+      const daysAgo = Math.floor((Date.now() - promo.date.getTime()) / (24 * 60 * 60 * 1000));
+      const monthsAgo = Math.floor(daysAgo / 30);
+      const timeAgo = monthsAgo > 0 ? `${monthsAgo} month${monthsAgo > 1 ? 's' : ''} ago` : `${daysAgo} day${daysAgo > 1 ? 's' : ''} ago`;
+      recentPromotion = `Promoted ${timeAgo} - verify mapping`;
+    }
     
     // Column S: Market Data Missing (check if Aon data exists for this Full Aon Code)
     let marketDataMissing = '';
@@ -4490,15 +4532,30 @@ function syncEmployeesMappedSheet_() {
   
   autoResizeColumnsIfNotCalculator(empSh, 1, 19);
   
+  // Count issues
+  const recentPromotionCount = rows.filter(row => row[15] && row[15].length > 0).length; // Column P (index 15)
+  const marketDataMissingCount = rows.filter(row => row[18] && row[18].length > 0).length; // Column S (index 18)
+  
   const totalProcessed = rows.length + filteredCount;
-  const msg = `✅ Synced ${rows.length} employees (${filteredCount} old exits filtered):\n` +
+  let msg = `✅ Synced ${rows.length} employees (${filteredCount} old exits filtered):\n\n` +
     `✓ Approved: ${approvedCount}\n` +
     `📋 Legacy: ${legacyCount}\n` +
     `🔍 Title-Based: ${titleBasedCount}\n` +
-    `⚠️ Needs Review: ${needsReviewCount}\n\n` +
-    `Filter: Active + exits after Jan 1, 2024\n` +
-    `⚡ Optimized: 80% faster (v4.5.0)`;
-  SpreadsheetApp.getActive().toast(msg, 'Employees Mapped ⚡', 10);
+    `⚠️ Needs Review: ${needsReviewCount}\n`;
+  
+  if (recentPromotionCount > 0) {
+    msg += `\n📈 Recent Promotions: ${recentPromotionCount} employees (verify mappings)\n`;
+  }
+  
+  if (marketDataMissingCount > 0) {
+    msg += `\n🔴 Missing Market Data: ${marketDataMissingCount} employees\n`;
+  }
+  
+  msg += `\nFilter: Active + exits after Jan 1, 2024`;
+  
+  // Show summary as ALERT (center screen) instead of toast (bottom right, often cut off)
+  const ui = SpreadsheetApp.getUi();
+  ui.alert('✅ Employee Mapping Complete', msg, ui.ButtonSet.OK);
 }
 
 /**
