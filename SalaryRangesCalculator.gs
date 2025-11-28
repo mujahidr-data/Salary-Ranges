@@ -14,18 +14,22 @@
  * - Persistent legacy mapping storage
  * - Interactive calculator UI
  * 
- * @version 4.11.0
+ * @version 4.12.0
  * @date 2025-11-27
- * @changelog v4.11.0 - FEATURE: Full Aon Code column in Employees Mapped
+ * @changelog v4.12.0 - UX: Full Aon Code persistence + Better notifications
+ *   - PERSISTENCE: Full Aon Code (Column I) now preserved across imports
+ *   - Auto-generates initially, preserves user edits on re-import
+ *   - Like Approved status - edit once, stays edited
+ *   - VISUAL: Yellow headers on editable columns (F: Aon Code, I: Full Aon Code)
+ *   - Hover notes: "✏️ EDITABLE: Enter full Aon Code..."
+ *   - NOTIFICATIONS: Important messages now center-screen alerts (not bottom-right toasts)
+ *   - Summary stats after sync: Alert instead of easily-missed toast
+ *   - Error messages: Alerts instead of toasts
+ *   - Progress toasts: Shorter, clearer (Step 1/3, 2/3, 3/3)
+ *   - Import complete: Updated to mention editable columns
+ * @previous v4.11.0 - FEATURE: Full Aon Code column in Employees Mapped
  *   - NEW COLUMN: "Full Aon Code" (column I) shows complete code with level
  *   - Example: Base "EN.SODE" + Level "L3 IC" → Full "EN.SODE.P3"
- *   - Helps identify exact market data lookup code
- *   - Shows if rollup data would be used (.R3 vs .P3)
- *   - Makes mapping decisions easier with visible complete codes
- *   - Schema: 16 → 17 columns (Full Aon Code inserted after Level)
- *   - All column indices updated (Status: K→L, Salary: L→M, etc.)
- *   - Conditional formatting rules adjusted for new column positions
- *   - Legacy mappings and CR calculations updated
  * @previous v4.10.1 - CRITICAL FIX: Column mismatch in Employees Mapped (15→16)
  *   - Error: "The data has 16 but the range has 15"
  *   - Root cause: v4.9.0 added Market Data Missing column (16th)
@@ -4302,9 +4306,13 @@ function syncEmployeesMappedSheet_() {
     ]]);
     empSh.setFrozenRows(1);
     empSh.getRange(1,1,1,17).setFontWeight('bold');
+    
+    // Highlight editable columns: F (Aon Code) and I (Full Aon Code)
+    empSh.getRange(1, 6).setBackground('#FFD966').setNote('✏️ EDITABLE: Enter base Aon Code (e.g., EN.SODE)');  // Column F
+    empSh.getRange(1, 9).setBackground('#FFD966').setNote('✏️ EDITABLE: Enter full Aon Code with level token (e.g., EN.SODE.P3)');  // Column I
   }
   
-  // Get existing mappings (preserve approved ones)
+  // Get existing mappings (preserve approved ones AND user edits to Full Aon Code)
   const existing = new Map();
   if (empSh.getLastRow() > 1) {
     const empVals = empSh.getRange(2,1,empSh.getLastRow()-1,17).getValues();
@@ -4314,9 +4322,10 @@ function syncEmployeesMappedSheet_() {
           aonCode: row[5] || '',
           jobFamilyDesc: row[6] || '',
           level: row[7] || '',
-          confidence: row[9] || '',   // Shifted from 8
-          source: row[10] || '',       // Shifted from 9
-          status: row[11] || ''        // Shifted from 10
+          fullAonCode: row[8] || '',   // Column I - preserve user edits
+          confidence: row[9] || '',
+          source: row[10] || '',
+          status: row[11] || ''
         });
       }
     });
@@ -4339,16 +4348,17 @@ function syncEmployeesMappedSheet_() {
   const iTerm = baseHead.findIndex(h => /Termination.*date|Term.*date|End.*date|Leave.*date/i.test(h));
   
   // Load Aon data for market data availability check
-  SpreadsheetApp.getActive().toast('Loading Aon data...', 'Sync Mappings', 1);
+  SpreadsheetApp.getActive().toast('📊 Loading market data...', 'Step 1/3', 2);
   const aonCache = _preloadAonData_();
   
   if (iEmpID < 0) {
-    SpreadsheetApp.getActive().toast('Employee ID column not found in Base Data', 'Error', 5);
+    const ui = SpreadsheetApp.getUi();
+    ui.alert('❌ Error', 'Employee ID column not found in Base Data', ui.ButtonSet.OK);
     return;
   }
   
   // Progress indicator
-  SpreadsheetApp.getActive().toast('Loading employee data...', 'Employee Mapping', 3);
+  SpreadsheetApp.getActive().toast('👥 Processing employees...', 'Step 2/3', 2);
   
   // Cutoff date: Jan 1, 2024 for filtering exits
   const exitCutoffDate = new Date('2024-01-01');
@@ -4563,8 +4573,13 @@ function syncEmployeesMappedSheet_() {
     }
     
     // Build Full Aon Code (e.g., "EN.SODE.P3")
+    // Priority: Preserve user edits, otherwise auto-generate
     let fullAonCode = '';
-    if (aonCode && ciqLevel) {
+    if (prev && prev.fullAonCode) {
+      // User has edited this before - preserve their edit
+      fullAonCode = prev.fullAonCode;
+    } else if (aonCode && ciqLevel) {
+      // Auto-generate from base Aon Code + Level token
       const levelToken = _ciqLevelToToken_(ciqLevel); // e.g., "L3 IC" → "P3"
       fullAonCode = levelToken ? `${aonCode}.${levelToken}` : aonCode;
     }
@@ -4573,7 +4588,7 @@ function syncEmployeesMappedSheet_() {
   }
   
   // Write to sheet
-  SpreadsheetApp.getActive().toast('Writing data (3/3)...', 'Employee Mapping', 3);
+  SpreadsheetApp.getActive().toast('💾 Writing to sheet...', 'Step 3/3', 2);
   empSh.getRange(2,1,Math.max(1, empSh.getMaxRows()-1),17).clearContent();
   if (rows.length) {
     empSh.getRange(2,1,rows.length,17).setValues(rows);
@@ -4654,20 +4669,21 @@ function syncEmployeesMappedSheet_() {
   const marketDataMissingCount = rows.filter(row => row[15] && row[15].length > 0).length; // Column P (index 15)
   
   const totalProcessed = rows.length + filteredCount;
-  let msg = `✅ Synced ${rows.length} employees (${filteredCount} old exits filtered):\n` +
+  let msg = `✅ Synced ${rows.length} employees (${filteredCount} old exits filtered):\n\n` +
     `✓ Approved: ${approvedCount}\n` +
     `📋 Legacy: ${legacyCount}\n` +
     `🔍 Title-Based: ${titleBasedCount}\n` +
     `⚠️ Needs Review: ${needsReviewCount}\n`;
   
   if (marketDataMissingCount > 0) {
-    msg += `🔴 Missing Market Data: ${marketDataMissingCount}\n`;
+    msg += `\n🔴 Missing Market Data: ${marketDataMissingCount} employees\n`;
   }
   
-  msg += `\nFilter: Active + exits after Jan 1, 2024\n` +
-         `⚡ Optimized: 80% faster (v4.5.0)`;
+  msg += `\nFilter: Active + exits after Jan 1, 2024`;
   
-  SpreadsheetApp.getActive().toast(msg, 'Employees Mapped ⚡', 10);
+  // Show summary as ALERT (center screen) instead of toast (bottom right, often cut off)
+  const ui = SpreadsheetApp.getUi();
+  ui.alert('✅ Employee Mapping Complete', msg, ui.ButtonSet.OK);
 }
 
 /**
@@ -5716,9 +5732,10 @@ function importBobData() {
       '   • Yellow rows = Needs Review ⚠️\n' +
       '   • Red rows = Rejected/Missing\n' +
       '   Change Status dropdown to approve mappings\n\n' +
-      '2️⃣ For each employee, verify:\n' +
-      '   • Aon Code (job family)\n' +
-      '   • Level (L2 IC through L9 Mgr)\n' +
+      '2️⃣ Edit mappings (YELLOW HEADERS = editable):\n' +
+      '   • Column F: Aon Code (e.g., EN.SODE)\n' +
+      '   • Column I: Full Aon Code (e.g., EN.SODE.P3)\n' +
+      '   • Column H: Level (from Bob, usually correct)\n' +
       '   • Check Level Anomaly column (orange)\n' +
       '   • Check Title Anomaly column (purple)\n\n' +
       '3️⃣ Run: 📊 Build Market Data\n\n' +
