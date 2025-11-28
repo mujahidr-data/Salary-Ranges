@@ -14,7 +14,7 @@
  * - Persistent legacy mapping storage
  * - Interactive calculator UI
  * 
- * @version 4.25.0
+ * @version 4.25.1
  * @date 2025-11-28
  * @performance Highly optimized with strategic caching and batch operations:
  *   - Pre-loaded Aon data: Saves 10,080+ sheet reads (~95% faster market data build)
@@ -25,7 +25,14 @@
  *   - Legacy mappings batch load: Saves 600+ lookups (~90% faster mapping resolution)
  *   - Pre-indexed CR groups: ~98% faster CR calculations (Map-based grouping)
  *   - Reduced sleep timers: 500ms→300ms, 1000ms→500ms (~40% faster workflows)
- * @changelog v4.25.0 - BUGFIX: Level Anomaly blank + Enhanced debugging
+ * @changelog v4.25.1 - HOTFIX: Cannot access fullAonCode before initialization
+ *   - CRITICAL: Import Bob Data failed with "Cannot access 'fullAonCode' before initialization"
+ *   - CAUSE: v4.25.0 changed Level Anomaly to use fullAonCode, but it was USED at line 4725 
+ *     before being DEFINED at line 4786 (JavaScript temporal dead zone error)
+ *   - FIX: Moved fullAonCode building from line 4786 → line 4719 (before anomaly detection)
+ *   - REMOVED: Duplicate fullAonCode building at old location
+ *   - RESULT: Import Bob Data now completes, Level Anomaly works correctly
+ * @previous v4.25.0 - BUGFIX: Level Anomaly blank + Enhanced debugging
  *   - FIXED: Level Anomaly checked wrong column (aonCode vs fullAonCode)
  *   - BUG: Line 4715 checked `aonCode` (Column F = base code "EN.SODE") with no token
  *   - FIX: Now checks `fullAonCode` (Column I = "EN.SODE.P5") to extract token
