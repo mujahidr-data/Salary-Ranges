@@ -5985,8 +5985,8 @@ function hideBackendSheets() {
     '👁️ Hide Backend Sheets',
     'This will hide all data sheets, showing only the calculators:\n\n' +
     '✅ Visible:\n' +
-    '  • Salary Ranges (X0)\n' +
-    '  • Salary Ranges (Y1)\n\n' +
+    '  • Engineering and Product (X0)\n' +
+    '  • Everyone Else (Y1)\n\n' +
     '🔒 Hidden:\n' +
     '  • All Aon data sheets\n' +
     '  • All employee/mapping sheets\n' +
@@ -5999,7 +5999,8 @@ function hideBackendSheets() {
   
   if (response !== ui.Button.YES) return;
   
-  const calculatorSheets = ['Salary Ranges (X0)', 'Salary Ranges (Y1)'];
+  // Use the actual calculator sheet names from constants
+  const calculatorSheets = [UI_SHEET_NAME_X0, UI_SHEET_NAME_Y1]; // "Engineering and Product", "Everyone Else"
   const sheets = ss.getSheets();
   let hiddenCount = 0;
   
@@ -6015,7 +6016,9 @@ function hideBackendSheets() {
   ui.alert(
     '✅ Backend Sheets Hidden',
     `Hidden ${hiddenCount} sheet(s).\n\n` +
-    'Only calculator sheets are now visible.\n\n' +
+    'Only calculator sheets are now visible:\n' +
+    '  • Engineering and Product\n' +
+    '  • Everyone Else\n\n' +
     'To unhide: Tools → 👁️ Show All Sheets',
     ui.ButtonSet.OK
   );
