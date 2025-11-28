@@ -4562,9 +4562,24 @@ function syncEmployeesMappedSheet_() {
   
   autoResizeColumnsIfNotCalculator(empSh, 1, 20);
   
-  // Count issues
+  // Count issues and log details
   const recentPromotionCount = rows.filter(row => row[15] && row[15].length > 0).length; // Column P (index 15)
-  const marketDataMissingCount = rows.filter(row => row[18] && row[18].length > 0).length; // Column S (index 18)
+  const missingDataRows = rows.filter(row => row[18] && row[18].length > 0);
+  const marketDataMissingCount = missingDataRows.length; // Column S (index 18)
+  
+  // Log first 10 market data missing cases for debugging
+  Logger.log(`\n=== MARKET DATA MISSING DETAILS ===`);
+  missingDataRows.slice(0, 10).forEach((row, idx) => {
+    const empID = row[0];
+    const site = row[4];
+    const aonCode = row[5];
+    const level = row[7];
+    const fullAonCode = row[8];
+    const missing = row[18];
+    const active = row[19];
+    Logger.log(`${idx + 1}. EmpID=${empID}, Site=${site}, AonCode=${aonCode}, Level=${level}, FullCode=${fullAonCode}, Active=${active}, Reason: ${missing}`);
+  });
+  Logger.log(`Total with missing market data: ${marketDataMissingCount}\n`);
   
   const totalProcessed = rows.length + filteredCount;
   let msg = `✅ Synced ${rows.length} employees (${filteredCount} old exits filtered):\n\n` +
@@ -5068,6 +5083,17 @@ function _preloadAonData_() {
   }
   
   Logger.log(`Pre-loaded ${aonCache.size} total Aon data combinations`);
+  
+  // Sample 5 random keys from cache for verification
+  Logger.log(`\n=== AON CACHE SAMPLE ===`);
+  let sampleCount = 0;
+  aonCache.forEach((value, key) => {
+    if (sampleCount < 5) {
+      Logger.log(`Cache entry: "${key}" → has data: ${value.p25 ? 'yes' : 'no'}`);
+      sampleCount++;
+    }
+  });
+  Logger.log(`===\n`);
   return aonCache;
 }
 
