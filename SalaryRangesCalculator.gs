@@ -14,7 +14,7 @@
  * - Persistent legacy mapping storage
  * - Interactive calculator UI
  * 
- * @version 4.23.0
+ * @version 4.24.0
  * @date 2025-11-28
  * @performance Highly optimized with strategic caching and batch operations:
  *   - Pre-loaded Aon data: Saves 10,080+ sheet reads (~95% faster market data build)
@@ -25,7 +25,16 @@
  *   - Legacy mappings batch load: Saves 600+ lookups (~90% faster mapping resolution)
  *   - Pre-indexed CR groups: ~98% faster CR calculations (Map-based grouping)
  *   - Reduced sleep timers: 500ms→300ms, 1000ms→500ms (~40% faster workflows)
- * @changelog v4.23.0 - FEATURE: Smart currency rounding for cleaner ranges
+ * @changelog v4.24.0 - BUGFIX: New Hire CR not populating (status filter too strict)
+ *   - FIXED: _preIndexEmployeesForCR_() only included "Approved" status
+ *   - PROBLEM: Most employees have "Legacy" status, were being excluded
+ *   - SOLUTION: Now includes both "Approved" AND "Legacy" status
+ *   - IMPACT: New Hire CR will now populate for recently hired employees
+ *   - ADDED: Debug logging to track new hire detection (first 5 + total count)
+ *   - VALIDATES: Start Date is Date object, within 365 days, has valid salary
+ *   - NOTE: Start Date IS in Employees Mapped Column O (copied from Base Data)
+ *   - RESULT: New Hire CR column should now show values for recent hires
+ * @previous v4.23.0 - FEATURE: Smart currency rounding for cleaner ranges
  *   - ADDED: Region-based currency rounding in Full List generation
  *   - India: Round to nearest ₹1,000 (e.g., 1,234,567 → 1,235,000)
  *   - US: Round to nearest $100 (e.g., $123,456 → $123,500)
@@ -5622,16 +5631,19 @@ function _preIndexEmployeesForCR_() {
   const execMap = _getExecDescMap_();
   const cutoffDate = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000);
   
+  let newHireDebugCount = 0;
+  
   empVals.forEach(row => {
     const empID = String(row[0] || '').trim();
     const aonCode = String(row[5] || '').trim();
     const empLevel = String(row[7] || '').trim(); // Column H
     const empSite = String(row[4] || '').trim();
-    const status = String(row[12] || '').trim(); // Column M (shifted from L)
-    const salary = row[13]; // Column N (shifted from M)
-    const startDate = row[14]; // Column O (shifted from N)
+    const status = String(row[12] || '').trim(); // Column M = Status
+    const salary = row[13]; // Column N = Base Salary
+    const startDate = row[14]; // Column O = Start Date
     
-    if (status !== 'Approved' || !salary || isNaN(salary) || salary <= 0) return;
+    // Only include Approved or Legacy status for CR calculations
+    if ((status !== 'Approved' && status !== 'Legacy') || !salary || isNaN(salary) || salary <= 0) return;
     
     const empFamily = execMap.get(aonCode) || '';
     if (!empFamily) return;
@@ -5654,13 +5666,34 @@ function _preIndexEmployeesForCR_() {
     if (rating === 'HH') group.ttSalaries.push(salary);
     if (rating === 'ML' || rating === 'NI') group.btSalaries.push(salary);
     
+    // New Hire CR: Check if hired in last 365 days
     if (startDate) {
       const startDateObj = startDate instanceof Date ? startDate : new Date(startDate);
-      if (startDateObj >= cutoffDate) {
-        group.nhSalaries.push(salary);
+      
+      // Validate date is valid
+      if (startDateObj && !isNaN(startDateObj.getTime())) {
+        if (startDateObj >= cutoffDate) {
+          group.nhSalaries.push(salary);
+          
+          // Debug: Log first 5 new hires
+          if (newHireDebugCount < 5) {
+            const daysAgo = Math.floor((Date.now() - startDateObj.getTime()) / (1000 * 60 * 60 * 24));
+            Logger.log(`New Hire: EmpID=${empID}, StartDate=${startDateObj.toISOString().split('T')[0]}, DaysAgo=${daysAgo}, Salary=${salary}, Key=${key}`);
+            newHireDebugCount++;
+          }
+        }
       }
     }
   });
+  
+  // Count total new hires across all groups
+  let totalNewHires = 0;
+  empIndex.forEach(group => {
+    totalNewHires += group.nhSalaries.length;
+  });
+  
+  Logger.log(`Pre-indexed ${empIndex.size} employee groups`);
+  Logger.log(`New Hire CR: Found ${totalNewHires} total employees hired in last 365 days (cutoff: ${cutoffDate.toISOString().split('T')[0]})`);
   
   Logger.log(`Pre-indexed ${empIndex.size} employee groups`);
   return empIndex;
