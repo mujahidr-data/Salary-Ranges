@@ -6324,14 +6324,28 @@ function exportMeritData() {
       return;
     }
     
-    // Load data
-    SpreadsheetApp.getActive().toast('Loading employee data...', '', -1);
-    const baseVals = baseData.getDataRange().getValues();
-    const empVals = employeesMapped.getDataRange().getValues();
-    const fullListVals = fullList.getDataRange().getValues();
+    // ============================================================================
+    // STEP 1: Load all source data
+    // ============================================================================
+    SpreadsheetApp.getActive().toast('Loading source data...', '', -1);
     
-    // Build headers map for base data
+    // Load Base Data (Bob employee data)
+    const baseVals = baseData.getDataRange().getValues();
     const baseHeaders = baseVals[0].map(h => String(h || '').trim());
+    
+    // Load Employees Mapped (Job Level + Full Aon Code)
+    const empVals = employeesMapped.getDataRange().getValues();
+    const empHeaders = empVals[0].map(h => String(h || '').trim());
+    
+    // Load Full List (Market data + Internal stats by Full Aon Code)
+    const fullListVals = fullList.getDataRange().getValues();
+    const flHeaders = fullListVals[0].map(h => String(h || '').trim());
+    
+    Logger.log(`Loaded: ${baseVals.length - 1} employees from Base Data, ${empVals.length - 1} from Employees Mapped, ${fullListVals.length - 1} from Full List`);
+    
+    // ============================================================================
+    // STEP 2: Map Base Data columns (Bob data by Emp ID)
+    // ============================================================================
     const findBaseCol = (name) => {
       const idx = baseHeaders.indexOf(name);
       if (idx < 0) {
@@ -6340,7 +6354,6 @@ function exportMeritData() {
       return idx;
     };
     
-    // Column indices for Base Data
     const bEmpId = findBaseCol('Emp ID');
     const bName = findBaseCol('Emp Name');
     const bStartDate = findBaseCol('Start Date');
@@ -6352,30 +6365,32 @@ function exportMeritData() {
     const bEmail = findBaseCol('email');
     const bBaseSalary = findBaseCol('Base Salary');
     const bCurrency = findBaseCol('Currency');
-    const bActive = findBaseCol('Active'); // Find Active column dynamically
+    const bActive = findBaseCol('Active');
     
-    // Log column indices for debugging
-    Logger.log(`Base Data columns: EmpId=${bEmpId}, Name=${bName}, StartDate=${bStartDate}, Title=${bTitle}, Email=${bEmail}, BaseSalary=${bBaseSalary}, Active=${bActive}`);
+    Logger.log(`Base Data columns mapped: EmpId=${bEmpId}, Active=${bActive}, Site=${bSite}, BaseSalary=${bBaseSalary}`);
     
-    // Validate required columns
-    if (bEmpId < 0 || bName < 0 || bActive < 0) {
-      throw new Error(`Missing required columns in Base Data. Found columns: ${baseHeaders.join(', ')}`);
+    if (bEmpId < 0 || bActive < 0) {
+      throw new Error(`Missing required columns in Base Data: Emp ID or Active. Found: ${baseHeaders.join(', ')}`);
     }
     
-    // Build headers map for Employees Mapped
-    const empHeaders = empVals[0].map(h => String(h || '').trim());
+    // ============================================================================
+    // STEP 3: Map Employees Mapped columns (Level + Full Aon Code by Emp ID)
+    // ============================================================================
     const findEmpCol = (name) => empHeaders.indexOf(name);
     
     const eEmpId = findEmpCol('Emp ID');
     const eLevel = findEmpCol('Job Level');
     const eFullAonCode = findEmpCol('Full Aon Code');
     
-    // Build headers map for Full List
-    const flHeaders = fullListVals[0].map(h => String(h || '').trim());
+    Logger.log(`Employees Mapped columns: EmpId=${eEmpId}, Level=${eLevel}, FullAonCode=${eFullAonCode}`);
+    
+    // ============================================================================
+    // STEP 4: Map Full List columns (Market + Internal stats by Full Aon Code)
+    // ============================================================================
     const findFLCol = (name) => flHeaders.indexOf(name);
     
     const flSite = findFLCol('Site');
-    const flAonCode = findFLCol('Aon Code');
+    const flAonCode = findFLCol('Aon Code'); // This is the Full Aon Code (base + function)
     const flP40 = findFLCol('P40');
     const flP50 = findFLCol('P50');
     const flP625 = findFLCol('P62.5');
@@ -6384,33 +6399,41 @@ function exportMeritData() {
     const flIntMedian = findFLCol('Internal Median');
     const flIntMax = findFLCol('Internal Max');
     
-    // Load FX rates
-    const fxMap = _getFxMap_();
+    Logger.log(`Full List columns: Site=${flSite}, AonCode=${flAonCode}, P40=${flP40}, IntMin=${flIntMin}`);
     
-    // Index Employees Mapped by Emp ID
-    SpreadsheetApp.getActive().toast('Indexing employee mappings...', '', -1);
-    const empMap = new Map();
+    // ============================================================================
+    // STEP 5: Build lookup indices
+    // ============================================================================
+    
+    // Load FX rates for currency conversion
+    const fxMap = _getFxMap_();
+    Logger.log(`FX rates loaded: ${fxMap.size} currencies`);
+    
+    // INDEX 1: Employees Mapped by Emp ID → Get Job Level + Full Aon Code
+    SpreadsheetApp.getActive().toast('Building Emp ID → Level + Aon Code index...', '', -1);
+    const empMap = new Map(); // Key: Emp ID, Value: {level, fullAonCode}
     for (let r = 1; r < empVals.length; r++) {
       const row = empVals[r];
       const empId = String(row[eEmpId] || '').trim();
       if (!empId) continue;
       
-      empMap.set(empId, {
-        level: String(row[eLevel] || '').trim(),
-        fullAonCode: String(row[eFullAonCode] || '').trim()
-      });
+      const level = String(row[eLevel] || '').trim();
+      const fullAonCode = String(row[eFullAonCode] || '').trim();
+      
+      empMap.set(empId, { level, fullAonCode });
     }
+    Logger.log(`Employee mapping index built: ${empMap.size} employees`);
     
-    // Index Full List by Site|AonCode
-    SpreadsheetApp.getActive().toast('Indexing market data...', '', -1);
-    const marketMap = new Map();
+    // INDEX 2: Full List by Site|Full Aon Code → Get Market Data + Internal Stats
+    SpreadsheetApp.getActive().toast('Building Site|AonCode → Market Data index...', '', -1);
+    const marketMap = new Map(); // Key: "Site|FullAonCode", Value: {p40, p50, p625, p75, intMin, intMedian, intMax}
     for (let r = 1; r < fullListVals.length; r++) {
       const row = fullListVals[r];
       const site = String(row[flSite] || '').trim();
-      const aonCode = String(row[flAonCode] || '').trim();
-      if (!site || !aonCode) continue;
+      const fullAonCode = String(row[flAonCode] || '').trim(); // Full Aon Code from Full List
+      if (!site || !fullAonCode) continue;
       
-      const key = `${site}|${aonCode}`;
+      const key = `${site}|${fullAonCode}`;
       marketMap.set(key, {
         p40: row[flP40] || 0,
         p50: row[flP50] || 0,
@@ -6421,16 +6444,17 @@ function exportMeritData() {
         intMax: row[flIntMax] || ''
       });
     }
+    Logger.log(`Market data index built: ${marketMap.size} Site|AonCode combinations`);
     
-    // Index Bonus History by Emp ID
-    SpreadsheetApp.getActive().toast('Loading bonus data...', '', -1);
-    const bonusMap = new Map();
+    // INDEX 3: Bonus History by Emp ID → Get Variable Compensation
+    SpreadsheetApp.getActive().toast('Building Emp ID → Bonus Data index...', '', -1);
+    const bonusMap = new Map(); // Key: Emp ID, Value: {varType, varPct}
     if (bonusHistory && bonusHistory.getLastRow() > 1) {
       const bonusVals = bonusHistory.getDataRange().getValues();
       const bonusHeaders = bonusVals[0].map(h => String(h || '').trim());
       const bhEmpId = bonusHeaders.indexOf('Emp ID');
-      const bhVarType = bonusHeaders.indexOf('Variable type'); // Column D
-      const bhVarPct = bonusHeaders.indexOf('Variable %'); // Column E
+      const bhVarType = bonusHeaders.indexOf('Variable type');
+      const bhVarPct = bonusHeaders.indexOf('Variable %');
       
       if (bhEmpId >= 0 && bhVarType >= 0 && bhVarPct >= 0) {
         for (let r = 1; r < bonusVals.length; r++) {
@@ -6444,11 +6468,12 @@ function exportMeritData() {
           });
         }
       }
+      Logger.log(`Bonus data index built: ${bonusMap.size} employees`);
     }
     
-    // Load Comp History Summary (pre-processed for fast lookup)
-    SpreadsheetApp.getActive().toast('Loading compensation history summary...', '', -1);
-    const compMap = new Map();
+    // INDEX 4: Comp History Summary by Emp ID → Get Last Promotion/Increase
+    SpreadsheetApp.getActive().toast('Building Emp ID → Comp History index...', '', -1);
+    const compMap = new Map(); // Key: Emp ID, Value: {lastPromotionDate, lastIncreaseDate, lastIncreasePct}
     const compSummaryVals = compHistorySummary.getDataRange().getValues();
     const compSummaryHeaders = compSummaryVals[0].map(h => String(h || '').trim());
     const csEmpId = compSummaryHeaders.indexOf('Emp ID');
@@ -6467,6 +6492,7 @@ function exportMeritData() {
         lastIncreasePct: row[csIncreasePct] || ''
       });
     }
+    Logger.log(`Comp history index built: ${compMap.size} employees`);
     
     // Build output data
     SpreadsheetApp.getActive().toast('Building merit export rows...', '', -1);
@@ -6532,15 +6558,22 @@ function exportMeritData() {
       const baseSalary = row[bBaseSalary] || 0;
       const currency = String(row[bCurrency] || '').trim();
       
-      // Debug first employee
+      // Debug first employee - Base Data
       if (activeCount === 1) {
-        Logger.log(`First employee: ID=${empId}, Name=${name}, Title=${title}, Email=${email}, Salary=${baseSalary}, Site=${site}`);
+        Logger.log(`\n=== FIRST ACTIVE EMPLOYEE ===`);
+        Logger.log(`[Base Data] Emp ID: ${empId}`);
+        Logger.log(`[Base Data] Name: ${name}, Title: ${title}, Email: ${email}`);
+        Logger.log(`[Base Data] Site: ${site}, Base Salary: ${baseSalary} ${currency}`);
       }
       
-      // Get mapped data (fast Map lookup)
+      // DATA SOURCE 2: Employees Mapped → Get Level + Full Aon Code by Emp ID
       const empData = empMap.get(empId) || { level: '', fullAonCode: '' };
       const level = empData.level;
       const fullAonCode = empData.fullAonCode;
+      
+      if (activeCount === 1) {
+        Logger.log(`[Employees Mapped] Emp ID ${empId} → Level: "${level}", Full Aon Code: "${fullAonCode}"`);
+      }
       
       // Convert to USD
       let baseSalaryUSD = baseSalary;
@@ -6549,7 +6582,7 @@ function exportMeritData() {
         baseSalaryUSD = baseSalary * fxRate;
       }
       
-      // Get market data
+      // DATA SOURCE 3: Full List → Get Market Data + Internal Stats by Site|Full Aon Code
       const marketKey = `${site}|${fullAonCode}`;
       const marketData = marketMap.get(marketKey) || {
         p40: '',
@@ -6561,10 +6594,11 @@ function exportMeritData() {
         intMax: ''
       };
       
-      // Debug first employee's market data
       if (activeCount === 1) {
-        Logger.log(`First employee market lookup: key="${marketKey}", found=${marketMap.has(marketKey)}`);
-        Logger.log(`Market data: p40=${marketData.p40}, p50=${marketData.p50}, intMin=${marketData.intMin}, intMedian=${marketData.intMedian}`);
+        Logger.log(`[Full List] Lookup key: "${marketKey}"`);
+        Logger.log(`[Full List] Found: ${marketMap.has(marketKey)}`);
+        Logger.log(`[Full List] Market: P40=${marketData.p40}, P50=${marketData.p50}, P62.5=${marketData.p625}, P75=${marketData.p75}`);
+        Logger.log(`[Full List] Internal: Min=${marketData.intMin}, Median=${marketData.intMedian}, Max=${marketData.intMax}`);
       }
       
       // Determine market median based on X0/Y1 logic
@@ -6599,15 +6633,21 @@ function exportMeritData() {
         distanceFromMedian = distance.toFixed(0);
       }
       
-      // Get bonus data (fast Map lookup - O(1))
+      // DATA SOURCE 4: Bonus History → Get Variable Comp by Emp ID
       const bonusData = bonusMap.get(empId) || { varType: '', varPct: '' };
       
-      // Get comp history data (fast Map lookup - O(1))
+      // DATA SOURCE 5: Comp History Summary → Get Last Promotion/Increase by Emp ID
       const compData = compMap.get(empId) || {
         lastPromotionDate: '',
         lastIncreaseDate: '',
         lastIncreasePct: ''
       };
+      
+      if (activeCount === 1) {
+        Logger.log(`[Bonus History] Emp ID ${empId} → Var Type: "${bonusData.varType}", Var %: ${bonusData.varPct}`);
+        Logger.log(`[Comp History Summary] Emp ID ${empId} → Last Promo: ${compData.lastPromotionDate}, Last Increase: ${compData.lastIncreasePct}`);
+        Logger.log(`===========================\n`);
+      }
       
       outputData.push([
         empId,
