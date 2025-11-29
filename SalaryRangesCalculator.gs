@@ -6216,45 +6216,49 @@ function exportMeritData() {
       const chReason = compHeaders.indexOf('History reason');
       
       if (chEmpId >= 0 && chEffDate >= 0) {
-        // Group by employee
+        SpreadsheetApp.getActive().toast(`Processing ${compVals.length - 1} compensation records...`, '', -1);
+        
+        // Group by employee (single pass)
         const empHistory = new Map();
         for (let r = 1; r < compVals.length; r++) {
           const row = compVals[r];
           const empId = String(row[chEmpId] || '').trim();
           if (!empId) continue;
           
+          const dateVal = row[chEffDate];
+          const dateTime = dateVal instanceof Date ? dateVal.getTime() : new Date(dateVal).getTime();
+          
           if (!empHistory.has(empId)) {
             empHistory.set(empId, []);
           }
           empHistory.get(empId).push({
-            date: row[chEffDate] || '',
+            dateTime: dateTime,
+            date: dateVal,
             salary: row[chBaseSalary] || 0,
-            reason: String(row[chReason] || '').trim()
+            reason: String(row[chReason] || '').trim().toLowerCase()
           });
         }
         
-        // Find latest promotion and increase for each employee
+        SpreadsheetApp.getActive().toast(`Analyzing history for ${empHistory.size} employees...`, '', -1);
+        
+        // Process each employee's history
         empHistory.forEach((history, empId) => {
-          // Sort by date descending
-          history.sort((a, b) => {
-            const dateA = new Date(a.date);
-            const dateB = new Date(b.date);
-            return dateB - dateA;
-          });
+          // Sort by timestamp descending (most recent first)
+          history.sort((a, b) => b.dateTime - a.dateTime);
           
           let lastPromotionDate = '';
           let lastIncreaseDate = '';
           let lastIncreasePct = '';
           
-          // Find last promotion
+          // Find last promotion (already sorted, so first match is the latest)
           for (const entry of history) {
-            if (entry.reason.toLowerCase().includes('promotion')) {
+            if (entry.reason.includes('promotion')) {
               lastPromotionDate = entry.date;
               break;
             }
           }
           
-          // Calculate last increase %
+          // Calculate last increase % (compare most recent two entries)
           if (history.length >= 2) {
             const lastEntry = history[0];
             const prevEntry = history[1];
@@ -6310,8 +6314,14 @@ function exportMeritData() {
     
     const outputData = [outputHeader];
     let activeCount = 0;
+    const totalRows = baseVals.length - 1;
     
     for (let r = 1; r < baseVals.length; r++) {
+      // Progress indicator every 100 rows
+      if (r % 100 === 0) {
+        SpreadsheetApp.getActive().toast(`Processing employee ${r} of ${totalRows}...`, '', -1);
+      }
+      
       const row = baseVals[r];
       
       // Check if active (Column P = "Active")
@@ -6321,6 +6331,8 @@ function exportMeritData() {
       activeCount++;
       
       const empId = String(row[bEmpId] || '').trim();
+      if (!empId) continue; // Skip if no employee ID
+      
       const name = String(row[bName] || '').trim();
       const startDate = row[bStartDate] || '';
       const title = String(row[bTitle] || '').trim();
@@ -6332,7 +6344,7 @@ function exportMeritData() {
       const baseSalary = row[bBaseSalary] || 0;
       const currency = String(row[bCurrency] || '').trim();
       
-      // Get mapped data
+      // Get mapped data (fast Map lookup)
       const empData = empMap.get(empId) || { level: '', fullAonCode: '' };
       const level = empData.level;
       const fullAonCode = empData.fullAonCode;
@@ -6388,10 +6400,10 @@ function exportMeritData() {
         distanceFromMedian = distance.toFixed(0);
       }
       
-      // Get bonus data
+      // Get bonus data (fast Map lookup - O(1))
       const bonusData = bonusMap.get(empId) || { varType: '', varPct: '' };
       
-      // Get comp history data
+      // Get comp history data (fast Map lookup - O(1))
       const compData = compMap.get(empId) || {
         lastPromotionDate: '',
         lastIncreaseDate: '',
@@ -6430,6 +6442,7 @@ function exportMeritData() {
     }
     
     // Sort by Emp ID
+    SpreadsheetApp.getActive().toast(`Sorting ${activeCount} employees...`, '', -1);
     const dataRows = outputData.slice(1);
     dataRows.sort((a, b) => {
       const idA = String(a[0] || '');
@@ -6438,50 +6451,52 @@ function exportMeritData() {
     });
     
     // Create/update output sheet
-    SpreadsheetApp.getActive().toast('Writing to sheet...', '', -1);
+    SpreadsheetApp.getActive().toast(`Writing ${activeCount} rows to sheet...`, '', -1);
     let outputSheet = ss.getSheetByName('Internal Data Analysis');
     if (!outputSheet) {
       outputSheet = ss.insertSheet('Internal Data Analysis');
     }
     
+    // Clear and write in batches for better performance
     outputSheet.clear();
     outputSheet.setTabColor('#4285F4'); // Blue color
     
-    // Write data
-    outputSheet.getRange(1, 1, 1, outputHeader.length).setValues([outputHeader]);
-    if (dataRows.length > 0) {
-      outputSheet.getRange(2, 1, dataRows.length, outputHeader.length).setValues(dataRows);
+    // Write all data at once (more efficient than multiple writes)
+    SpreadsheetApp.getActive().toast('Writing data...', '', -1);
+    const allData = [outputHeader].concat(dataRows);
+    if (allData.length > 0) {
+      outputSheet.getRange(1, 1, allData.length, outputHeader.length).setValues(allData);
     }
     
     // Format header
+    SpreadsheetApp.getActive().toast('Formatting...', '', -1);
     const headerRange = outputSheet.getRange(1, 1, 1, outputHeader.length);
     headerRange.setBackground('#4285F4')
                .setFontColor('#FFFFFF')
                .setFontWeight('bold')
                .setWrap(true);
     
-    // Format columns
+    // Format columns (batch operations)
     if (dataRows.length > 0) {
-      // Base Salary (column K)
-      outputSheet.getRange(2, 11, dataRows.length, 1).setNumberFormat('#,##0');
+      const numRows = dataRows.length;
       
-      // Base Salary USD (column L)
-      outputSheet.getRange(2, 12, dataRows.length, 1).setNumberFormat('#,##0');
+      // Batch number formats
+      const formats = [
+        [2, 11, numRows, 1, '#,##0'],      // Base Salary
+        [2, 12, numRows, 1, '#,##0'],      // Base Salary USD
+        [2, 14, numRows, 3, '#,##0'],      // Internal Min/Median/Max
+        [2, 17, numRows, 3, '#,##0'],      // Market ranges
+        [2, 20, numRows, 1, '0.00'],       // Compa Ratio
+        [2, 22, numRows, 1, '#,##0']       // Distance from median
+      ];
       
-      // Internal Min/Median/Max (columns N, O, P)
-      outputSheet.getRange(2, 14, dataRows.length, 3).setNumberFormat('#,##0');
-      
-      // Market ranges (columns Q, R, S)
-      outputSheet.getRange(2, 17, dataRows.length, 3).setNumberFormat('#,##0');
-      
-      // Compa Ratio (column T)
-      outputSheet.getRange(2, 20, dataRows.length, 1).setNumberFormat('0.00');
-      
-      // Distance from median (column V)
-      outputSheet.getRange(2, 22, dataRows.length, 1).setNumberFormat('#,##0');
+      formats.forEach(([row, col, rows, cols, format]) => {
+        outputSheet.getRange(row, col, rows, cols).setNumberFormat(format);
+      });
     }
     
-    // Auto-resize columns
+    // Auto-resize columns (can be slow, so do it last)
+    SpreadsheetApp.getActive().toast('Auto-resizing columns...', '', -1);
     outputSheet.autoResizeColumns(1, outputHeader.length);
     
     // Freeze header row
