@@ -71,6 +71,7 @@ const SHEET_NAMES = {
   BASE_DATA: "Base Data",
   BONUS_HISTORY: "Bonus History",
   COMP_HISTORY: "Comp History",
+  COMP_HISTORY_SUMMARY: "Comp History Summary",
   PERF_RATINGS: "Performance Ratings",
   SALARY_RANGES_X0: "Engineering and Product",
   SALARY_RANGES_Y1: "Everyone Else",
@@ -6063,6 +6064,148 @@ function showAllSheets() {
 }
 
 /**
+ * Builds a summary of compensation history (latest promotion and increase per employee)
+ * This pre-processing makes merit export much faster
+ */
+function buildCompHistorySummary() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+  
+  SpreadsheetApp.getActive().toast('Building Comp History Summary...', '', -1);
+  
+  try {
+    const compHistory = ss.getSheetByName(SHEET_NAMES.COMP_HISTORY);
+    
+    if (!compHistory || compHistory.getLastRow() <= 1) {
+      ui.alert('❌ Error', 'Comp History sheet not found or empty. Please import Bob data first.', ui.ButtonSet.OK);
+      return;
+    }
+    
+    SpreadsheetApp.getActive().toast('Loading compensation history...', '', -1);
+    const compVals = compHistory.getDataRange().getValues();
+    const compHeaders = compVals[0].map(h => String(h || '').trim());
+    const chEmpId = compHeaders.indexOf('Emp ID');
+    const chEffDate = compHeaders.indexOf('History effective date');
+    const chBaseSalary = compHeaders.indexOf('History base salary');
+    const chCurrency = compHeaders.indexOf('History base salary currency');
+    const chReason = compHeaders.indexOf('History reason');
+    
+    if (chEmpId < 0 || chEffDate < 0) {
+      throw new Error('Required columns not found in Comp History');
+    }
+    
+    SpreadsheetApp.getActive().toast(`Processing ${compVals.length - 1} compensation records...`, '', -1);
+    
+    // Group by employee
+    const empHistory = new Map();
+    for (let r = 1; r < compVals.length; r++) {
+      const row = compVals[r];
+      const empId = String(row[chEmpId] || '').trim();
+      if (!empId) continue;
+      
+      const dateVal = row[chEffDate];
+      const dateTime = dateVal instanceof Date ? dateVal.getTime() : new Date(dateVal).getTime();
+      
+      if (!empHistory.has(empId)) {
+        empHistory.set(empId, []);
+      }
+      empHistory.get(empId).push({
+        dateTime: dateTime,
+        date: dateVal,
+        salary: row[chBaseSalary] || 0,
+        currency: String(row[chCurrency] || '').trim(),
+        reason: String(row[chReason] || '').trim().toLowerCase()
+      });
+    }
+    
+    SpreadsheetApp.getActive().toast(`Analyzing history for ${empHistory.size} employees...`, '', -1);
+    
+    // Build summary
+    const summaryHeader = ['Emp ID', 'Last Promotion Date', 'Last Increase Date', 'Last Increase %'];
+    const summaryData = [summaryHeader];
+    
+    empHistory.forEach((history, empId) => {
+      // Sort by timestamp descending (most recent first)
+      history.sort((a, b) => b.dateTime - a.dateTime);
+      
+      let lastPromotionDate = '';
+      let lastIncreaseDate = '';
+      let lastIncreasePct = '';
+      
+      // Find last promotion (already sorted, so first match is the latest)
+      for (const entry of history) {
+        if (entry.reason.includes('promotion')) {
+          lastPromotionDate = entry.date;
+          break;
+        }
+      }
+      
+      // Calculate last increase % (compare most recent two entries with same currency)
+      if (history.length >= 2) {
+        const lastEntry = history[0];
+        const prevEntry = history[1];
+        
+        // Only calculate if same currency
+        if (lastEntry.salary && prevEntry.salary && prevEntry.salary > 0 &&
+            lastEntry.currency && prevEntry.currency && 
+            lastEntry.currency === prevEntry.currency) {
+          const pct = ((lastEntry.salary - prevEntry.salary) / prevEntry.salary) * 100;
+          if (pct >= 0) {
+            lastIncreasePct = pct.toFixed(2) + '%';
+            lastIncreaseDate = lastEntry.date;
+          }
+        }
+      }
+      
+      summaryData.push([empId, lastPromotionDate, lastIncreaseDate, lastIncreasePct]);
+    });
+    
+    // Create/update summary sheet
+    SpreadsheetApp.getActive().toast('Writing summary...', '', -1);
+    let summarySheet = ss.getSheetByName(SHEET_NAMES.COMP_HISTORY_SUMMARY);
+    if (!summarySheet) {
+      summarySheet = ss.insertSheet(SHEET_NAMES.COMP_HISTORY_SUMMARY);
+    }
+    
+    summarySheet.clear();
+    summarySheet.setTabColor('#FF6D01'); // Orange color
+    
+    // Write data
+    if (summaryData.length > 0) {
+      summarySheet.getRange(1, 1, summaryData.length, summaryHeader.length).setValues(summaryData);
+    }
+    
+    // Format header
+    const headerRange = summarySheet.getRange(1, 1, 1, summaryHeader.length);
+    headerRange.setBackground('#FF6D01')
+               .setFontColor('#FFFFFF')
+               .setFontWeight('bold');
+    
+    // Auto-resize
+    summarySheet.autoResizeColumns(1, summaryHeader.length);
+    summarySheet.setFrozenRows(1);
+    
+    SpreadsheetApp.getActive().toast('', '', 1); // Clear toast
+    
+    ui.alert(
+      '✅ Comp History Summary Built',
+      `Processed ${empHistory.size} employees.\n\n` +
+      'Summary sheet created: "Comp History Summary"\n\n' +
+      'This will make merit exports much faster!',
+      ui.ButtonSet.OK
+    );
+    
+    Logger.log(`Comp History Summary complete: ${empHistory.size} employees`);
+    
+  } catch (error) {
+    SpreadsheetApp.getActive().toast('', '', 1); // Clear toast
+    Logger.log(`Error in buildCompHistorySummary: ${error}`);
+    ui.alert('❌ Error', `Failed to build comp history summary:\n\n${error.message}`, ui.ButtonSet.OK);
+    throw error;
+  }
+}
+
+/**
  * Exports internal stats for merit planning
  * Includes employee data, market ranges, internal stats, and compensation history
  */
@@ -6070,7 +6213,7 @@ function exportMeritData() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const ui = SpreadsheetApp.getUi();
   
-  ui.alert(
+  const response = ui.alert(
     '📊 Export Merit Data',
     'This will create/update the "Internal Data Analysis" sheet with:\n\n' +
     '✅ Active employees only\n' +
@@ -6078,9 +6221,15 @@ function exportMeritData() {
     '✅ Internal statistics\n' +
     '✅ Compensation history\n' +
     '✅ Bonus information\n\n' +
-    'This may take a few minutes...',
-    ui.ButtonSet.OK
+    '⚠️ Important: Run "Build Comp History Summary" first (Tools menu)\n' +
+    'if you haven\'t already.\n\n' +
+    'Continue?',
+    ui.ButtonSet.YES_NO
   );
+  
+  if (response !== ui.Button.YES) {
+    return;
+  }
   
   SpreadsheetApp.getActive().toast('📊 Building merit export...', '', -1);
   
@@ -6089,11 +6238,21 @@ function exportMeritData() {
     const baseData = ss.getSheetByName(SHEET_NAMES.BASE_DATA);
     const employeesMapped = ss.getSheetByName(SHEET_NAMES.EMPLOYEES_MAPPED);
     const bonusHistory = ss.getSheetByName(SHEET_NAMES.BONUS_HISTORY);
-    const compHistory = ss.getSheetByName(SHEET_NAMES.COMP_HISTORY);
+    const compHistorySummary = ss.getSheetByName(SHEET_NAMES.COMP_HISTORY_SUMMARY);
     const fullList = ss.getSheetByName(SHEET_NAMES.FULL_LIST);
     
     if (!baseData || !employeesMapped || !fullList) {
       throw new Error('Missing required sheets: Base Data, Employees Mapped, or Full List');
+    }
+    
+    if (!compHistorySummary) {
+      ui.alert(
+        '⚠️ Comp History Summary Missing',
+        'Please run "Build Comp History Summary" first from the Tools menu.\n\n' +
+        'This pre-processes compensation history for faster exports.',
+        ui.ButtonSet.OK
+      );
+      return;
     }
     
     // Load data
@@ -6204,80 +6363,26 @@ function exportMeritData() {
       }
     }
     
-    // Index Comp History by Emp ID (latest promotion and increase)
-    SpreadsheetApp.getActive().toast('Loading compensation history...', '', -1);
+    // Load Comp History Summary (pre-processed for fast lookup)
+    SpreadsheetApp.getActive().toast('Loading compensation history summary...', '', -1);
     const compMap = new Map();
-    if (compHistory && compHistory.getLastRow() > 1) {
-      const compVals = compHistory.getDataRange().getValues();
-      const compHeaders = compVals[0].map(h => String(h || '').trim());
-      const chEmpId = compHeaders.indexOf('Emp ID');
-      const chEffDate = compHeaders.indexOf('History effective date');
-      const chBaseSalary = compHeaders.indexOf('History base salary');
-      const chReason = compHeaders.indexOf('History reason');
+    const compSummaryVals = compHistorySummary.getDataRange().getValues();
+    const compSummaryHeaders = compSummaryVals[0].map(h => String(h || '').trim());
+    const csEmpId = compSummaryHeaders.indexOf('Emp ID');
+    const csPromotionDate = compSummaryHeaders.indexOf('Last Promotion Date');
+    const csIncreaseDate = compSummaryHeaders.indexOf('Last Increase Date');
+    const csIncreasePct = compSummaryHeaders.indexOf('Last Increase %');
+    
+    for (let r = 1; r < compSummaryVals.length; r++) {
+      const row = compSummaryVals[r];
+      const empId = String(row[csEmpId] || '').trim();
+      if (!empId) continue;
       
-      if (chEmpId >= 0 && chEffDate >= 0) {
-        SpreadsheetApp.getActive().toast(`Processing ${compVals.length - 1} compensation records...`, '', -1);
-        
-        // Group by employee (single pass)
-        const empHistory = new Map();
-        for (let r = 1; r < compVals.length; r++) {
-          const row = compVals[r];
-          const empId = String(row[chEmpId] || '').trim();
-          if (!empId) continue;
-          
-          const dateVal = row[chEffDate];
-          const dateTime = dateVal instanceof Date ? dateVal.getTime() : new Date(dateVal).getTime();
-          
-          if (!empHistory.has(empId)) {
-            empHistory.set(empId, []);
-          }
-          empHistory.get(empId).push({
-            dateTime: dateTime,
-            date: dateVal,
-            salary: row[chBaseSalary] || 0,
-            reason: String(row[chReason] || '').trim().toLowerCase()
-          });
-        }
-        
-        SpreadsheetApp.getActive().toast(`Analyzing history for ${empHistory.size} employees...`, '', -1);
-        
-        // Process each employee's history
-        empHistory.forEach((history, empId) => {
-          // Sort by timestamp descending (most recent first)
-          history.sort((a, b) => b.dateTime - a.dateTime);
-          
-          let lastPromotionDate = '';
-          let lastIncreaseDate = '';
-          let lastIncreasePct = '';
-          
-          // Find last promotion (already sorted, so first match is the latest)
-          for (const entry of history) {
-            if (entry.reason.includes('promotion')) {
-              lastPromotionDate = entry.date;
-              break;
-            }
-          }
-          
-          // Calculate last increase % (compare most recent two entries)
-          if (history.length >= 2) {
-            const lastEntry = history[0];
-            const prevEntry = history[1];
-            if (lastEntry.salary && prevEntry.salary && prevEntry.salary > 0) {
-              const pct = ((lastEntry.salary - prevEntry.salary) / prevEntry.salary) * 100;
-              if (pct >= 0) {
-                lastIncreasePct = pct.toFixed(2) + '%';
-                lastIncreaseDate = lastEntry.date;
-              }
-            }
-          }
-          
-          compMap.set(empId, {
-            lastPromotionDate,
-            lastIncreaseDate,
-            lastIncreasePct
-          });
-        });
-      }
+      compMap.set(empId, {
+        lastPromotionDate: row[csPromotionDate] || '',
+        lastIncreaseDate: row[csIncreaseDate] || '',
+        lastIncreasePct: row[csIncreasePct] || ''
+      });
     }
     
     // Build output data
@@ -6546,6 +6651,8 @@ function onOpen() {
   const toolsMenu = ui.createMenu('🔧 Tools')
     .addItem('⏰ Import Bob Data (Headless)', 'importBobDataHeadless')
     .addItem('🔔 Setup Daily Import Trigger', 'setupDailyImportTrigger')
+    .addSeparator()
+    .addItem('📊 Build Comp History Summary', 'buildCompHistorySummary')
     .addSeparator()
     .addItem('🔄 Migrate .5 Level Aon Codes (One-Time)', 'migrateHalfLevelAonCodes')
     .addSeparator()
