@@ -6314,9 +6314,9 @@ function exportMeritData() {
     for (let r = 1; r < baseVals.length; r++) {
       const row = baseVals[r];
       
-      // Check if active (Column P = "Yes")
+      // Check if active (Column P = "Active")
       const activeStatus = String(row[bActive] || '').trim();
-      if (activeStatus !== 'Yes') continue;
+      if (activeStatus !== 'Active') continue;
       
       activeCount++;
       
