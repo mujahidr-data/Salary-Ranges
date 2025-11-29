@@ -6062,6 +6062,458 @@ function showAllSheets() {
   }
 }
 
+/**
+ * Exports internal stats for merit planning
+ * Includes employee data, market ranges, internal stats, and compensation history
+ */
+function exportMeritData() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+  
+  ui.alert(
+    '📊 Export Merit Data',
+    'This will create/update the "Internal Data Analysis" sheet with:\n\n' +
+    '✅ Active employees only\n' +
+    '✅ Base salary + market ranges\n' +
+    '✅ Internal statistics\n' +
+    '✅ Compensation history\n' +
+    '✅ Bonus information\n\n' +
+    'This may take a few minutes...',
+    ui.ButtonSet.OK
+  );
+  
+  SpreadsheetApp.getActive().toast('📊 Building merit export...', '', -1);
+  
+  try {
+    // Get source sheets
+    const baseData = ss.getSheetByName(SHEET_NAMES.BASE_DATA);
+    const employeesMapped = ss.getSheetByName(SHEET_NAMES.EMPLOYEES_MAPPED);
+    const bonusHistory = ss.getSheetByName(SHEET_NAMES.BONUS_HISTORY);
+    const compHistory = ss.getSheetByName(SHEET_NAMES.COMP_HISTORY);
+    const fullList = ss.getSheetByName(SHEET_NAMES.FULL_LIST);
+    
+    if (!baseData || !employeesMapped || !fullList) {
+      throw new Error('Missing required sheets: Base Data, Employees Mapped, or Full List');
+    }
+    
+    // Load data
+    SpreadsheetApp.getActive().toast('Loading employee data...', '', -1);
+    const baseVals = baseData.getDataRange().getValues();
+    const empVals = employeesMapped.getDataRange().getValues();
+    const fullListVals = fullList.getDataRange().getValues();
+    
+    // Build headers map for base data
+    const baseHeaders = baseVals[0].map(h => String(h || '').trim());
+    const findBaseCol = (name) => baseHeaders.indexOf(name);
+    
+    // Column indices for Base Data (Column P = Active status)
+    const bEmpId = findBaseCol('Emp ID');
+    const bName = findBaseCol('Emp Name');
+    const bStartDate = findBaseCol('Start Date');
+    const bTitle = findBaseCol('Title');
+    const bManager = findBaseCol('Manager');
+    const bDepartment = findBaseCol('Department');
+    const bELT = findBaseCol('ELT');
+    const bSite = findBaseCol('Site');
+    const bEmail = findBaseCol('email');
+    const bBaseSalary = findBaseCol('Base Salary');
+    const bCurrency = findBaseCol('Currency');
+    const bActive = 15; // Column P (0-indexed = 15)
+    
+    // Build headers map for Employees Mapped
+    const empHeaders = empVals[0].map(h => String(h || '').trim());
+    const findEmpCol = (name) => empHeaders.indexOf(name);
+    
+    const eEmpId = findEmpCol('Emp ID');
+    const eLevel = findEmpCol('Job Level');
+    const eFullAonCode = findEmpCol('Full Aon Code');
+    
+    // Build headers map for Full List
+    const flHeaders = fullListVals[0].map(h => String(h || '').trim());
+    const findFLCol = (name) => flHeaders.indexOf(name);
+    
+    const flSite = findFLCol('Site');
+    const flAonCode = findFLCol('Aon Code');
+    const flP40 = findFLCol('P40');
+    const flP50 = findFLCol('P50');
+    const flP625 = findFLCol('P62.5');
+    const flP75 = findFLCol('P75');
+    const flIntMin = findFLCol('Internal Min');
+    const flIntMedian = findFLCol('Internal Median');
+    const flIntMax = findFLCol('Internal Max');
+    
+    // Load FX rates
+    const fxMap = _getFxMap_();
+    
+    // Index Employees Mapped by Emp ID
+    SpreadsheetApp.getActive().toast('Indexing employee mappings...', '', -1);
+    const empMap = new Map();
+    for (let r = 1; r < empVals.length; r++) {
+      const row = empVals[r];
+      const empId = String(row[eEmpId] || '').trim();
+      if (!empId) continue;
+      
+      empMap.set(empId, {
+        level: String(row[eLevel] || '').trim(),
+        fullAonCode: String(row[eFullAonCode] || '').trim()
+      });
+    }
+    
+    // Index Full List by Site|AonCode
+    SpreadsheetApp.getActive().toast('Indexing market data...', '', -1);
+    const marketMap = new Map();
+    for (let r = 1; r < fullListVals.length; r++) {
+      const row = fullListVals[r];
+      const site = String(row[flSite] || '').trim();
+      const aonCode = String(row[flAonCode] || '').trim();
+      if (!site || !aonCode) continue;
+      
+      const key = `${site}|${aonCode}`;
+      marketMap.set(key, {
+        p40: row[flP40] || 0,
+        p50: row[flP50] || 0,
+        p625: row[flP625] || 0,
+        p75: row[flP75] || 0,
+        intMin: row[flIntMin] || '',
+        intMedian: row[flIntMedian] || '',
+        intMax: row[flIntMax] || ''
+      });
+    }
+    
+    // Index Bonus History by Emp ID
+    SpreadsheetApp.getActive().toast('Loading bonus data...', '', -1);
+    const bonusMap = new Map();
+    if (bonusHistory && bonusHistory.getLastRow() > 1) {
+      const bonusVals = bonusHistory.getDataRange().getValues();
+      const bonusHeaders = bonusVals[0].map(h => String(h || '').trim());
+      const bhEmpId = bonusHeaders.indexOf('Emp ID');
+      const bhVarType = bonusHeaders.indexOf('Variable type'); // Column D
+      const bhVarPct = bonusHeaders.indexOf('Variable %'); // Column E
+      
+      if (bhEmpId >= 0 && bhVarType >= 0 && bhVarPct >= 0) {
+        for (let r = 1; r < bonusVals.length; r++) {
+          const row = bonusVals[r];
+          const empId = String(row[bhEmpId] || '').trim();
+          if (!empId) continue;
+          
+          bonusMap.set(empId, {
+            varType: String(row[bhVarType] || '').trim(),
+            varPct: row[bhVarPct] || ''
+          });
+        }
+      }
+    }
+    
+    // Index Comp History by Emp ID (latest promotion and increase)
+    SpreadsheetApp.getActive().toast('Loading compensation history...', '', -1);
+    const compMap = new Map();
+    if (compHistory && compHistory.getLastRow() > 1) {
+      const compVals = compHistory.getDataRange().getValues();
+      const compHeaders = compVals[0].map(h => String(h || '').trim());
+      const chEmpId = compHeaders.indexOf('Emp ID');
+      const chEffDate = compHeaders.indexOf('History effective date');
+      const chBaseSalary = compHeaders.indexOf('History base salary');
+      const chReason = compHeaders.indexOf('History reason');
+      
+      if (chEmpId >= 0 && chEffDate >= 0) {
+        // Group by employee
+        const empHistory = new Map();
+        for (let r = 1; r < compVals.length; r++) {
+          const row = compVals[r];
+          const empId = String(row[chEmpId] || '').trim();
+          if (!empId) continue;
+          
+          if (!empHistory.has(empId)) {
+            empHistory.set(empId, []);
+          }
+          empHistory.get(empId).push({
+            date: row[chEffDate] || '',
+            salary: row[chBaseSalary] || 0,
+            reason: String(row[chReason] || '').trim()
+          });
+        }
+        
+        // Find latest promotion and increase for each employee
+        empHistory.forEach((history, empId) => {
+          // Sort by date descending
+          history.sort((a, b) => {
+            const dateA = new Date(a.date);
+            const dateB = new Date(b.date);
+            return dateB - dateA;
+          });
+          
+          let lastPromotionDate = '';
+          let lastIncreaseDate = '';
+          let lastIncreasePct = '';
+          
+          // Find last promotion
+          for (const entry of history) {
+            if (entry.reason.toLowerCase().includes('promotion')) {
+              lastPromotionDate = entry.date;
+              break;
+            }
+          }
+          
+          // Calculate last increase %
+          if (history.length >= 2) {
+            const lastEntry = history[0];
+            const prevEntry = history[1];
+            if (lastEntry.salary && prevEntry.salary && prevEntry.salary > 0) {
+              const pct = ((lastEntry.salary - prevEntry.salary) / prevEntry.salary) * 100;
+              if (pct >= 0) {
+                lastIncreasePct = pct.toFixed(2) + '%';
+                lastIncreaseDate = lastEntry.date;
+              }
+            }
+          }
+          
+          compMap.set(empId, {
+            lastPromotionDate,
+            lastIncreaseDate,
+            lastIncreasePct
+          });
+        });
+      }
+    }
+    
+    // Build output data
+    SpreadsheetApp.getActive().toast('Building merit export rows...', '', -1);
+    const outputHeader = [
+      'Emp ID',
+      'Emp Name',
+      'Start Date',
+      'Job Level',
+      'Title',
+      'Manager',
+      'Department',
+      'ELT',
+      'Site',
+      'Email',
+      'Base Salary',
+      'Base Salary in USD',
+      'Aon Code (Full)',
+      'Applicable Internal Min',
+      'Applicable Internal Median',
+      'Applicable Internal Max',
+      'Applicable Market Range Start',
+      'Applicable Market Range Median',
+      'Applicable Market Range End',
+      'Compa Ratio (Market Median)',
+      'Position in Range',
+      'Distance from Market Median',
+      'Current Variable Type',
+      'Variable %',
+      'Last Increase Date',
+      'Last Promotion Date',
+      'Last Increase %'
+    ];
+    
+    const outputData = [outputHeader];
+    let activeCount = 0;
+    
+    for (let r = 1; r < baseVals.length; r++) {
+      const row = baseVals[r];
+      
+      // Check if active (Column P = "Yes")
+      const activeStatus = String(row[bActive] || '').trim();
+      if (activeStatus !== 'Yes') continue;
+      
+      activeCount++;
+      
+      const empId = String(row[bEmpId] || '').trim();
+      const name = String(row[bName] || '').trim();
+      const startDate = row[bStartDate] || '';
+      const title = String(row[bTitle] || '').trim();
+      const manager = String(row[bManager] || '').trim();
+      const department = String(row[bDepartment] || '').trim();
+      const elt = String(row[bELT] || '').trim();
+      const site = String(row[bSite] || '').trim();
+      const email = String(row[bEmail] || '').trim();
+      const baseSalary = row[bBaseSalary] || 0;
+      const currency = String(row[bCurrency] || '').trim();
+      
+      // Get mapped data
+      const empData = empMap.get(empId) || { level: '', fullAonCode: '' };
+      const level = empData.level;
+      const fullAonCode = empData.fullAonCode;
+      
+      // Convert to USD
+      let baseSalaryUSD = baseSalary;
+      if (currency && currency !== 'USD') {
+        const fxRate = fxMap.get(currency) || 1;
+        baseSalaryUSD = baseSalary * fxRate;
+      }
+      
+      // Get market data
+      const marketKey = `${site}|${fullAonCode}`;
+      const marketData = marketMap.get(marketKey) || {
+        p40: '',
+        p50: '',
+        p625: '',
+        p75: '',
+        intMin: '',
+        intMedian: '',
+        intMax: ''
+      };
+      
+      // Determine market median based on X0/Y1 logic
+      // Check if this is an Engineering/Product role
+      const isX0 = fullAonCode && (
+        fullAonCode.startsWith('EN.') || 
+        fullAonCode.startsWith('DA.') ||
+        fullAonCode === 'TE.DADS'
+      );
+      
+      const marketMedian = isX0 ? (marketData.p625 || 0) : (marketData.p50 || 0);
+      const marketStart = marketData.p40 || 0;
+      const marketEnd = isX0 ? (marketData.p75 || 0) : (marketData.p625 || 0);
+      
+      // Calculate Compa Ratio
+      let compaRatio = '';
+      if (baseSalaryUSD && marketMedian && marketMedian > 0) {
+        compaRatio = (baseSalaryUSD / marketMedian).toFixed(2);
+      }
+      
+      // Calculate Position in Range
+      let positionInRange = '';
+      if (baseSalaryUSD && marketStart && marketEnd && marketEnd > marketStart) {
+        const position = ((baseSalaryUSD - marketStart) / (marketEnd - marketStart)) * 100;
+        positionInRange = position.toFixed(1) + '%';
+      }
+      
+      // Calculate Distance from Market Median
+      let distanceFromMedian = '';
+      if (baseSalaryUSD && marketMedian && marketMedian > 0) {
+        const distance = baseSalaryUSD - marketMedian;
+        distanceFromMedian = distance.toFixed(0);
+      }
+      
+      // Get bonus data
+      const bonusData = bonusMap.get(empId) || { varType: '', varPct: '' };
+      
+      // Get comp history data
+      const compData = compMap.get(empId) || {
+        lastPromotionDate: '',
+        lastIncreaseDate: '',
+        lastIncreasePct: ''
+      };
+      
+      outputData.push([
+        empId,
+        name,
+        startDate,
+        level,
+        title,
+        manager,
+        department,
+        elt,
+        site,
+        email,
+        baseSalary,
+        baseSalaryUSD,
+        fullAonCode,
+        marketData.intMin,
+        marketData.intMedian,
+        marketData.intMax,
+        marketStart,
+        marketMedian,
+        marketEnd,
+        compaRatio,
+        positionInRange,
+        distanceFromMedian,
+        bonusData.varType,
+        bonusData.varPct,
+        compData.lastIncreaseDate,
+        compData.lastPromotionDate,
+        compData.lastIncreasePct
+      ]);
+    }
+    
+    // Sort by Emp ID
+    const dataRows = outputData.slice(1);
+    dataRows.sort((a, b) => {
+      const idA = String(a[0] || '');
+      const idB = String(b[0] || '');
+      return idA.localeCompare(idB);
+    });
+    
+    // Create/update output sheet
+    SpreadsheetApp.getActive().toast('Writing to sheet...', '', -1);
+    let outputSheet = ss.getSheetByName('Internal Data Analysis');
+    if (!outputSheet) {
+      outputSheet = ss.insertSheet('Internal Data Analysis');
+    }
+    
+    outputSheet.clear();
+    outputSheet.setTabColor('#4285F4'); // Blue color
+    
+    // Write data
+    outputSheet.getRange(1, 1, 1, outputHeader.length).setValues([outputHeader]);
+    if (dataRows.length > 0) {
+      outputSheet.getRange(2, 1, dataRows.length, outputHeader.length).setValues(dataRows);
+    }
+    
+    // Format header
+    const headerRange = outputSheet.getRange(1, 1, 1, outputHeader.length);
+    headerRange.setBackground('#4285F4')
+               .setFontColor('#FFFFFF')
+               .setFontWeight('bold')
+               .setWrap(true);
+    
+    // Format columns
+    if (dataRows.length > 0) {
+      // Base Salary (column K)
+      outputSheet.getRange(2, 11, dataRows.length, 1).setNumberFormat('#,##0');
+      
+      // Base Salary USD (column L)
+      outputSheet.getRange(2, 12, dataRows.length, 1).setNumberFormat('#,##0');
+      
+      // Internal Min/Median/Max (columns N, O, P)
+      outputSheet.getRange(2, 14, dataRows.length, 3).setNumberFormat('#,##0');
+      
+      // Market ranges (columns Q, R, S)
+      outputSheet.getRange(2, 17, dataRows.length, 3).setNumberFormat('#,##0');
+      
+      // Compa Ratio (column T)
+      outputSheet.getRange(2, 20, dataRows.length, 1).setNumberFormat('0.00');
+      
+      // Distance from median (column V)
+      outputSheet.getRange(2, 22, dataRows.length, 1).setNumberFormat('#,##0');
+    }
+    
+    // Auto-resize columns
+    outputSheet.autoResizeColumns(1, outputHeader.length);
+    
+    // Freeze header row
+    outputSheet.setFrozenRows(1);
+    
+    SpreadsheetApp.getActive().toast('', '', 1); // Clear toast
+    
+    ui.alert(
+      '✅ Merit Export Complete',
+      `Successfully exported ${activeCount} active employees to "Internal Data Analysis" sheet.\n\n` +
+      'Data includes:\n' +
+      '  ✅ Employee demographics\n' +
+      '  ✅ Current compensation\n' +
+      '  ✅ Market ranges (X0/Y1 logic applied)\n' +
+      '  ✅ Internal statistics\n' +
+      '  ✅ Compa ratios & position in range\n' +
+      '  ✅ Compensation history\n' +
+      '  ✅ Bonus information\n\n' +
+      'Sheet is sorted by Emp ID.',
+      ui.ButtonSet.OK
+    );
+    
+    Logger.log(`Merit export complete: ${activeCount} active employees exported`);
+    
+  } catch (error) {
+    SpreadsheetApp.getActive().toast('', '', 1); // Clear toast
+    Logger.log(`Error in exportMeritData: ${error}`);
+    ui.alert('❌ Error', `Failed to export merit data:\n\n${error.message}`, ui.ButtonSet.OK);
+    throw error;
+  }
+}
+
 function onOpen() {
   const ui = SpreadsheetApp.getUi();
   
@@ -6103,6 +6555,8 @@ function onOpen() {
       .addItem('✅ Review Employee Mappings', 'reviewEmployeeMappings')
       .addSeparator()
       .addSubMenu(toolsMenu)
+      .addSeparator()
+      .addItem('📊 Export Merit Data', 'exportMeritData')
       .addToUi();
   
   // Auto-ensure pickers for both calculators
