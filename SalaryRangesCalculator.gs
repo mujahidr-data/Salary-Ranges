@@ -6344,33 +6344,41 @@ function exportMeritData() {
     Logger.log(`Loaded: ${baseVals.length - 1} employees from Base Data, ${empVals.length - 1} from Employees Mapped, ${fullListVals.length - 1} from Full List`);
     
     // ============================================================================
-    // STEP 2: Map Base Data columns (Bob data by Emp ID)
+    // STEP 2: Map Base Data columns (Bob data by Emp ID) - FLEXIBLE MATCHING
     // ============================================================================
-    const findBaseCol = (name) => {
-      const idx = baseHeaders.indexOf(name);
-      if (idx < 0) {
-        Logger.log(`WARNING: Column "${name}" not found in Base Data. Available: ${baseHeaders.slice(0, 20).join(', ')}`);
+    const findBaseColFlexible = (patterns) => {
+      for (const pattern of patterns) {
+        if (typeof pattern === 'string') {
+          const idx = baseHeaders.indexOf(pattern);
+          if (idx >= 0) return idx;
+        } else {
+          // RegExp pattern
+          const idx = baseHeaders.findIndex(h => pattern.test(h));
+          if (idx >= 0) return idx;
+        }
       }
-      return idx;
+      Logger.log(`WARNING: No match for patterns: ${patterns}. Available: ${baseHeaders.slice(0, 25).join(', ')}`);
+      return -1;
     };
     
-    const bEmpId = findBaseCol('Emp ID');
-    const bName = findBaseCol('Emp Name');
-    const bStartDate = findBaseCol('Start Date');
-    const bTitle = findBaseCol('Title');
-    const bManager = findBaseCol('Manager');
-    const bDepartment = findBaseCol('Department');
-    const bELT = findBaseCol('ELT');
-    const bSite = findBaseCol('Site');
-    const bEmail = findBaseCol('email');
-    const bBaseSalary = findBaseCol('Base Salary');
-    const bCurrency = findBaseCol('Currency');
-    const bActive = findBaseCol('Active');
+    const bEmpId = findBaseColFlexible(['Emp ID', 'Employee ID', 'Employee Id', /emp.*id/i]);
+    const bName = findBaseColFlexible(['Emp Name', 'Employee Name', 'Display name', 'Name']);
+    const bStartDate = findBaseColFlexible(['Start Date', 'Start date', 'Hire Date', 'Hire date']);
+    const bTitle = findBaseColFlexible(['Title', 'Job title', 'Job Title', 'Position']);
+    const bManager = findBaseColFlexible(['Manager', 'Manager name', 'Direct Manager']);
+    const bDepartment = findBaseColFlexible(['Department', 'Dept']);
+    const bELT = findBaseColFlexible(['ELT', 'Executive', 'Leadership Team']);
+    const bSite = findBaseColFlexible(['Site', 'Location', 'Office']);
+    const bEmail = findBaseColFlexible(['email', 'Email', 'Email address', 'E-mail']);
+    const bBaseSalary = findBaseColFlexible(['Base Salary', 'Base salary', 'Salary', 'Annual Salary']);
+    const bCurrency = findBaseColFlexible(['Currency', 'Base salary currency', 'Salary Currency']);
+    const bActive = findBaseColFlexible(['Active', 'active/Inactive', 'Status', 'Employee Status', /active.*inactive/i]);
     
     Logger.log(`Base Data columns mapped: EmpId=${bEmpId}, Active=${bActive}, Site=${bSite}, BaseSalary=${bBaseSalary}`);
+    Logger.log(`Base Data column names: EmpId="${baseHeaders[bEmpId]}", Active="${baseHeaders[bActive]}"`);
     
     if (bEmpId < 0 || bActive < 0) {
-      throw new Error(`Missing required columns in Base Data: Emp ID or Active. Found: ${baseHeaders.join(', ')}`);
+      throw new Error(`Missing required columns in Base Data. Emp ID=${bEmpId}, Active=${bActive}. Found columns: ${baseHeaders.join(', ')}`);
     }
     
     // ============================================================================
@@ -6538,9 +6546,10 @@ function exportMeritData() {
       
       const row = baseVals[r];
       
-      // Check if active (Column P = "Active")
-      const activeStatus = String(row[bActive] || '').trim();
-      if (activeStatus !== 'Active') continue;
+      // Check if active (flexible matching: "Active", "active", etc.)
+      const activeStatus = String(row[bActive] || '').trim().toLowerCase();
+      // Skip if inactive, terminated, or empty
+      if (!activeStatus || activeStatus === 'inactive' || activeStatus === 'terminated' || activeStatus === 'no') continue;
       
       activeCount++;
       
@@ -6561,6 +6570,7 @@ function exportMeritData() {
       // Debug first employee - Base Data
       if (activeCount === 1) {
         Logger.log(`\n=== FIRST ACTIVE EMPLOYEE ===`);
+        Logger.log(`[Base Data] Active Status Column: "${baseHeaders[bActive]}" = "${row[bActive]}"`);
         Logger.log(`[Base Data] Emp ID: ${empId}`);
         Logger.log(`[Base Data] Name: ${name}, Title: ${title}, Email: ${email}`);
         Logger.log(`[Base Data] Site: ${site}, Base Salary: ${baseSalary} ${currency}`);
