@@ -6332,9 +6332,15 @@ function exportMeritData() {
     
     // Build headers map for base data
     const baseHeaders = baseVals[0].map(h => String(h || '').trim());
-    const findBaseCol = (name) => baseHeaders.indexOf(name);
+    const findBaseCol = (name) => {
+      const idx = baseHeaders.indexOf(name);
+      if (idx < 0) {
+        Logger.log(`WARNING: Column "${name}" not found in Base Data. Available: ${baseHeaders.slice(0, 20).join(', ')}`);
+      }
+      return idx;
+    };
     
-    // Column indices for Base Data (Column P = Active status)
+    // Column indices for Base Data
     const bEmpId = findBaseCol('Emp ID');
     const bName = findBaseCol('Emp Name');
     const bStartDate = findBaseCol('Start Date');
@@ -6346,7 +6352,15 @@ function exportMeritData() {
     const bEmail = findBaseCol('email');
     const bBaseSalary = findBaseCol('Base Salary');
     const bCurrency = findBaseCol('Currency');
-    const bActive = 15; // Column P (0-indexed = 15)
+    const bActive = findBaseCol('Active'); // Find Active column dynamically
+    
+    // Log column indices for debugging
+    Logger.log(`Base Data columns: EmpId=${bEmpId}, Name=${bName}, StartDate=${bStartDate}, Title=${bTitle}, Email=${bEmail}, BaseSalary=${bBaseSalary}, Active=${bActive}`);
+    
+    // Validate required columns
+    if (bEmpId < 0 || bName < 0 || bActive < 0) {
+      throw new Error(`Missing required columns in Base Data. Found columns: ${baseHeaders.join(', ')}`);
+    }
     
     // Build headers map for Employees Mapped
     const empHeaders = empVals[0].map(h => String(h || '').trim());
@@ -6518,6 +6532,11 @@ function exportMeritData() {
       const baseSalary = row[bBaseSalary] || 0;
       const currency = String(row[bCurrency] || '').trim();
       
+      // Debug first employee
+      if (activeCount === 1) {
+        Logger.log(`First employee: ID=${empId}, Name=${name}, Title=${title}, Email=${email}, Salary=${baseSalary}, Site=${site}`);
+      }
+      
       // Get mapped data (fast Map lookup)
       const empData = empMap.get(empId) || { level: '', fullAonCode: '' };
       const level = empData.level;
@@ -6541,6 +6560,12 @@ function exportMeritData() {
         intMedian: '',
         intMax: ''
       };
+      
+      // Debug first employee's market data
+      if (activeCount === 1) {
+        Logger.log(`First employee market lookup: key="${marketKey}", found=${marketMap.has(marketKey)}`);
+        Logger.log(`Market data: p40=${marketData.p40}, p50=${marketData.p50}, intMin=${marketData.intMin}, intMedian=${marketData.intMedian}`);
+      }
       
       // Determine market median based on X0/Y1 logic
       // Check if this is an Engineering/Product role
@@ -6615,13 +6640,13 @@ function exportMeritData() {
       ]);
     }
     
-    // Sort by Emp ID
+    // Sort by Start Date (column index 2)
     SpreadsheetApp.getActive().toast(`Sorting ${activeCount} employees...`, '', -1);
     const dataRows = outputData.slice(1);
     dataRows.sort((a, b) => {
-      const idA = String(a[0] || '');
-      const idB = String(b[0] || '');
-      return idA.localeCompare(idB);
+      const dateA = a[2] ? new Date(a[2]) : new Date(0);
+      const dateB = b[2] ? new Date(b[2]) : new Date(0);
+      return dateA - dateB; // Ascending order (oldest first)
     });
     
     // Create/update output sheet
@@ -6656,12 +6681,15 @@ function exportMeritData() {
       
       // Batch number formats
       const formats = [
+        [2, 3, numRows, 1, 'yyyy-mm-dd'],  // Start Date
         [2, 11, numRows, 1, '#,##0'],      // Base Salary
         [2, 12, numRows, 1, '#,##0'],      // Base Salary USD
         [2, 14, numRows, 3, '#,##0'],      // Internal Min/Median/Max
         [2, 17, numRows, 3, '#,##0'],      // Market ranges
         [2, 20, numRows, 1, '0.00'],       // Compa Ratio
-        [2, 22, numRows, 1, '#,##0']       // Distance from median
+        [2, 22, numRows, 1, '#,##0'],      // Distance from median
+        [2, 25, numRows, 1, 'yyyy-mm-dd'], // Last Increase Date
+        [2, 26, numRows, 1, 'yyyy-mm-dd']  // Last Promotion Date
       ];
       
       formats.forEach(([row, col, rows, cols, format]) => {
@@ -6689,7 +6717,7 @@ function exportMeritData() {
       '  ✅ Compa ratios & position in range\n' +
       '  ✅ Compensation history\n' +
       '  ✅ Bonus information\n\n' +
-      'Sheet is sorted by Emp ID.',
+      'Sheet is sorted by Start Date (oldest first).',
       ui.ButtonSet.OK
     );
     
