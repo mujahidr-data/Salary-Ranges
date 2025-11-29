@@ -6825,7 +6825,8 @@ function onOpen() {
       .addSeparator()
       .addSubMenu(toolsMenu)
       .addSeparator()
-      .addItem('📊 Export Merit Data', 'exportMeritData')
+      .addItem('📊 Export Merit Data (OLD)', 'exportMeritData')
+      .addItem('📊 Export Merit Data (Formulas) 🆕', 'exportMeritDataWithFormulas')
       .addToUi();
   
   // Auto-ensure pickers for both calculators
