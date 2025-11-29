@@ -64,6 +64,7 @@ const BOB_REPORT_IDS = {
   BASE_DATA: "31048356",
   BONUS_HISTORY: "31054302",
   COMP_HISTORY: "31054312",
+  FULL_COMP_HISTORY: "31168524",
   PERF_RATINGS: "31172066"
 };
 
@@ -71,6 +72,7 @@ const SHEET_NAMES = {
   BASE_DATA: "Base Data",
   BONUS_HISTORY: "Bonus History",
   COMP_HISTORY: "Comp History",
+  FULL_COMP_HISTORY: "Full Comp History",
   COMP_HISTORY_SUMMARY: "Comp History Summary",
   PERF_RATINGS: "Performance Ratings",
   SALARY_RANGES_X0: "Engineering and Product",
@@ -586,6 +588,60 @@ function importBobCompHistoryLatest() {
   } catch (error) {
     Logger.log(`Error in importBobCompHistoryLatest: ${error.message}`);
     SpreadsheetApp.getUi().alert(`Error importing Comp History: ${error.message}`);
+    throw error;
+  }
+}
+
+/**
+ * Imports Full Compensation History report from HiBob
+ * Report ID: 31168524
+ * Contains complete compensation history for all employees
+ */
+function importBobFullCompHistory() {
+  try {
+    const reportId = BOB_REPORT_IDS.FULL_COMP_HISTORY;
+    const targetSheetName = SHEET_NAMES.FULL_COMP_HISTORY;
+    
+    Logger.log(`Starting import of ${targetSheetName}...`);
+    
+    const rows = fetchBobReport(reportId);
+    
+    if (!rows || rows.length === 0) {
+      throw new Error("No data returned from Full Comp History report");
+    }
+    
+    // Use the header from the report as-is
+    const header = rows[0];
+    
+    // Import all rows without transformation
+    const out = rows;
+    
+    const ss = SpreadsheetApp.getActive();
+    const sheet = getOrCreateSheet(ss, targetSheetName);
+    sheet.setTabColor('#FFA500'); // Orange color
+    
+    // Clear and write
+    sheet.clear();
+    const numCols = out[0].length;
+    sheet.getRange(1, 1, out.length, numCols).setValues(out);
+    
+    // Format header
+    const headerRange = sheet.getRange(1, 1, 1, numCols);
+    headerRange.setBackground('#FFA500')
+               .setFontColor('#FFFFFF')
+               .setFontWeight('bold')
+               .setWrap(true);
+    
+    // Auto-resize
+    sheet.autoResizeColumns(1, numCols);
+    sheet.setFrozenRows(1);
+    
+    Logger.log(`Successfully imported ${targetSheetName} with ${out.length - 1} rows`);
+    SpreadsheetApp.getActive().toast(`✅ Imported ${out.length - 1} comp history records`, targetSheetName, 5);
+    
+  } catch (error) {
+    Logger.log(`Error in importBobFullCompHistory: ${error.message}`);
+    SpreadsheetApp.getUi().alert(`Error importing Full Comp History: ${error.message}`);
     throw error;
   }
 }
@@ -5642,32 +5698,37 @@ function importBobDataHeadless() {
   
   try {
     // Step 1: Import Base Data
-    Logger.log('Step 1/8: Importing Base Data...');
+    Logger.log('Step 1/7: Importing Base Data...');
     importBobDataSimpleWithLookup();
     Utilities.sleep(1000);
     
     // Step 2: Import Bonus History
-    Logger.log('Step 2/8: Importing Bonus History...');
+    Logger.log('Step 2/7: Importing Bonus History...');
     importBobBonusHistoryLatest();
     Utilities.sleep(1000);
     
-    // Step 3: Import Comp History
-    Logger.log('Step 3/8: Importing Comp History...');
+    // Step 3: Import Comp History (latest per employee)
+    Logger.log('Step 3/7: Importing Comp History (latest)...');
     importBobCompHistoryLatest();
     Utilities.sleep(1000);
     
-    // Step 4: Import Performance Ratings
-    Logger.log('Step 4/8: Importing Performance Ratings...');
+    // Step 4: Import Full Comp History (complete history)
+    Logger.log('Step 4/7: Importing Full Comp History...');
+    importBobFullCompHistory();
+    Utilities.sleep(1000);
+    
+    // Step 5: Import Performance Ratings
+    Logger.log('Step 5/7: Importing Performance Ratings...');
     importBobPerformanceRatings();
     Utilities.sleep(1000);
     
-    // Step 5: Sync Employees Mapped with smart logic and anomaly detection
-    Logger.log('Step 5/6: Syncing Employees Mapped (smart mapping + anomaly detection)...');
+    // Step 6: Sync Employees Mapped with smart logic and anomaly detection
+    Logger.log('Step 6/7: Syncing Employees Mapped (smart mapping + anomaly detection)...');
     syncEmployeesMappedSheet_();
     Utilities.sleep(500);
     
-    // Step 6: Update Legacy Mappings from approved entries (feedback loop)
-    Logger.log('Step 6/6: Updating Legacy Mappings from approved entries...');
+    // Step 7: Update Legacy Mappings from approved entries (feedback loop)
+    Logger.log('Step 7/7: Updating Legacy Mappings from approved entries...');
     updateLegacyMappingsFromApproved_();
     Utilities.sleep(500);
     
@@ -5717,6 +5778,7 @@ function importBobData() {
     '✓ Base Data (employees)\n' +
     '✓ Bonus History (latest per employee)\n' +
     '✓ Comp History (latest per employee)\n' +
+    '✓ Full Comp History (complete history)\n' +
     '✓ Performance Ratings (latest ratings)\n' +
     '✓ Auto-sync Employees Mapped with smart suggestions\n' +
     '✓ Anomaly detection (level & title mismatches)\n\n' +
@@ -6074,24 +6136,31 @@ function buildCompHistorySummary() {
   SpreadsheetApp.getActive().toast('Building Comp History Summary...', '', -1);
   
   try {
-    const compHistory = ss.getSheetByName(SHEET_NAMES.COMP_HISTORY);
+    const fullCompHistory = ss.getSheetByName(SHEET_NAMES.FULL_COMP_HISTORY);
     
-    if (!compHistory || compHistory.getLastRow() <= 1) {
-      ui.alert('❌ Error', 'Comp History sheet not found or empty. Please import Bob data first.', ui.ButtonSet.OK);
+    if (!fullCompHistory || fullCompHistory.getLastRow() <= 1) {
+      ui.alert(
+        '❌ Full Comp History Missing', 
+        'Please run "Import Bob Data" first to create the Full Comp History sheet.\n\n' +
+        'This will import report ID: 31168524',
+        ui.ButtonSet.OK
+      );
       return;
     }
     
-    SpreadsheetApp.getActive().toast('Loading compensation history...', '', -1);
-    const compVals = compHistory.getDataRange().getValues();
+    SpreadsheetApp.getActive().toast('Loading full compensation history...', '', -1);
+    const compVals = fullCompHistory.getDataRange().getValues();
     const compHeaders = compVals[0].map(h => String(h || '').trim());
-    const chEmpId = compHeaders.indexOf('Emp ID');
-    const chEffDate = compHeaders.indexOf('History effective date');
-    const chBaseSalary = compHeaders.indexOf('History base salary');
-    const chCurrency = compHeaders.indexOf('History base salary currency');
-    const chReason = compHeaders.indexOf('History reason');
+    
+    // Find columns with flexible matching
+    const chEmpId = compHeaders.findIndex(h => /emp.*id/i.test(h));
+    const chEffDate = compHeaders.findIndex(h => /effective.*date|history.*date/i.test(h));
+    const chBaseSalary = compHeaders.findIndex(h => /base.*salary|history.*salary/i.test(h) && !/currency/i.test(h));
+    const chCurrency = compHeaders.findIndex(h => /currency/i.test(h));
+    const chReason = compHeaders.findIndex(h => /reason/i.test(h));
     
     if (chEmpId < 0 || chEffDate < 0) {
-      throw new Error('Required columns not found in Comp History');
+      throw new Error(`Required columns not found. Found: ${compHeaders.join(', ')}`);
     }
     
     SpreadsheetApp.getActive().toast(`Processing ${compVals.length - 1} compensation records...`, '', -1);
