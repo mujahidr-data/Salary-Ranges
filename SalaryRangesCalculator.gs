@@ -7050,8 +7050,9 @@ function reviewRangeProgression() {
   
   const response = ui.alert('🔍 Range Progression Review', 
     'This will analyze Full List for:\n\n' +
-    '1. Within-track progression: salary ranges must increase as levels go up\n' +
-    '2. Cross-track validation: IC must be higher than Mgr at equivalent levels (L4-L7)\n\n' +
+    '1. Data completeness: Range Start/Mid/End must all be present or all empty\n' +
+    '2. Within-track progression: salary ranges must increase as levels go up\n' +
+    '3. Cross-track validation: IC must be higher than Mgr at equivalent levels (L4-L7)\n\n' +
     'For IC vs Mgr issues, TWO OPTIONS are provided:\n' +
     '• [REDUCE MGR] - Lower Mgr to 92.5% of IC (avoids market drift)\n' +
     '• [INCREASE IC] - Raise IC to 108% of Mgr (if market supports it)\n\n' +
@@ -7083,6 +7084,125 @@ function reviewRangeProgression() {
     ui.alert('❌ Error', `Missing columns in Full List: ${missing.join(', ')}`, ui.ButtonSet.OK);
     return;
   }
+  
+  // ================================
+  // DATA COMPLETENESS CHECK
+  // ================================
+  // If Range Start exists, Range Mid and Range End should also exist (and vice versa)
+  SpreadsheetApp.getActive().toast('Checking data completeness...', '🔍 Range Progression Review', 3);
+  
+  const completenessIssues = [];
+  
+  for (let i = 1; i < data.length; i++) {
+    const row = data[i];
+    const region = row[colIdx['Region']];
+    const aonCode = row[colIdx['Aon Code (base)']];
+    const level = row[colIdx['CIQ Level']];
+    const rangeStart = parseFloat(row[colIdx['Range Start']]) || 0;
+    const rangeMid = parseFloat(row[colIdx['Range Mid']]) || 0;
+    const rangeEnd = parseFloat(row[colIdx['Range End']]) || 0;
+    
+    // Skip if all empty (no data for this combination)
+    if (!rangeStart && !rangeMid && !rangeEnd) continue;
+    
+    // Check for incomplete data
+    const hasStart = rangeStart > 0;
+    const hasMid = rangeMid > 0;
+    const hasEnd = rangeEnd > 0;
+    
+    // Flag if any value exists but others are missing
+    if (hasStart && !hasMid) {
+      completenessIssues.push({
+        region: region,
+        jobFamily: aonCode,
+        level: level,
+        metric: 'Range Mid',
+        currentValue: 0,
+        previousLevel: 'Range Start',
+        previousValue: rangeStart,
+        issue: `[INCOMPLETE DATA] ${level}: Has Range Start (${formatNumber(rangeStart)}) but missing Range Mid`,
+        recommended: Math.ceil(rangeStart * 1.25),  // Estimate: 25% above start
+        status: 'Pending'
+      });
+    }
+    
+    if (hasStart && !hasEnd) {
+      completenessIssues.push({
+        region: region,
+        jobFamily: aonCode,
+        level: level,
+        metric: 'Range End',
+        currentValue: 0,
+        previousLevel: 'Range Start',
+        previousValue: rangeStart,
+        issue: `[INCOMPLETE DATA] ${level}: Has Range Start (${formatNumber(rangeStart)}) but missing Range End`,
+        recommended: Math.ceil(rangeStart * 1.50),  // Estimate: 50% above start
+        status: 'Pending'
+      });
+    }
+    
+    if (hasMid && !hasStart) {
+      completenessIssues.push({
+        region: region,
+        jobFamily: aonCode,
+        level: level,
+        metric: 'Range Start',
+        currentValue: 0,
+        previousLevel: 'Range Mid',
+        previousValue: rangeMid,
+        issue: `[INCOMPLETE DATA] ${level}: Has Range Mid (${formatNumber(rangeMid)}) but missing Range Start`,
+        recommended: Math.ceil(rangeMid * 0.80),  // Estimate: 80% of mid
+        status: 'Pending'
+      });
+    }
+    
+    if (hasMid && !hasEnd) {
+      completenessIssues.push({
+        region: region,
+        jobFamily: aonCode,
+        level: level,
+        metric: 'Range End',
+        currentValue: 0,
+        previousLevel: 'Range Mid',
+        previousValue: rangeMid,
+        issue: `[INCOMPLETE DATA] ${level}: Has Range Mid (${formatNumber(rangeMid)}) but missing Range End`,
+        recommended: Math.ceil(rangeMid * 1.20),  // Estimate: 20% above mid
+        status: 'Pending'
+      });
+    }
+    
+    if (hasEnd && !hasStart) {
+      completenessIssues.push({
+        region: region,
+        jobFamily: aonCode,
+        level: level,
+        metric: 'Range Start',
+        currentValue: 0,
+        previousLevel: 'Range End',
+        previousValue: rangeEnd,
+        issue: `[INCOMPLETE DATA] ${level}: Has Range End (${formatNumber(rangeEnd)}) but missing Range Start`,
+        recommended: Math.ceil(rangeEnd * 0.67),  // Estimate: 67% of end
+        status: 'Pending'
+      });
+    }
+    
+    if (hasEnd && !hasMid) {
+      completenessIssues.push({
+        region: region,
+        jobFamily: aonCode,
+        level: level,
+        metric: 'Range Mid',
+        currentValue: 0,
+        previousLevel: 'Range End',
+        previousValue: rangeEnd,
+        issue: `[INCOMPLETE DATA] ${level}: Has Range End (${formatNumber(rangeEnd)}) but missing Range Mid`,
+        recommended: Math.ceil(rangeEnd * 0.83),  // Estimate: 83% of end
+        status: 'Pending'
+      });
+    }
+  }
+  
+  SpreadsheetApp.getActive().toast(`Found ${completenessIssues.length} data completeness issue(s)`, '🔍 Range Progression Review', 3);
   
   // Define level order for sorting
   // IC Track: L2 IC (starting) → L3 IC → ... → L6.5 IC → L7 IC
@@ -7438,6 +7558,9 @@ function reviewRangeProgression() {
     }
   }
   
+  // Combine all issues: completeness + progression + cross-track
+  const allIssues = [...completenessIssues, ...issues];
+  
   // Create or update Range Progression Issues sheet
   SpreadsheetApp.getActive().toast('Creating Range Progression Issues sheet...', '🔍 Range Progression Review', 3);
   
@@ -7461,8 +7584,8 @@ function reviewRangeProgression() {
     .setFontColor('white');
   
   // Write issues
-  if (issues.length > 0) {
-    const issueRows = issues.map(issue => [
+  if (allIssues.length > 0) {
+    const issueRows = allIssues.map(issue => [
       issue.region,
       issue.jobFamily,
       issue.level,
@@ -7482,8 +7605,22 @@ function reviewRangeProgression() {
     issuesSheet.getRange(2, 7, issueRows.length, 1).setNumberFormat('#,##0');  // Previous Value
     issuesSheet.getRange(2, 9, issueRows.length, 1).setNumberFormat('#,##0');  // Recommended
     
-    // Highlight issues (red background)
-    issuesSheet.getRange(2, 1, issueRows.length, issueHeaders.length).setBackground('#ffebee');
+    // Highlight issues based on type
+    for (let i = 0; i < allIssues.length; i++) {
+      const rowNum = i + 2;  // +2 for header row
+      const issue = allIssues[i];
+      
+      if (issue.issue.includes('[INCOMPLETE DATA]')) {
+        // Orange for data completeness issues
+        issuesSheet.getRange(rowNum, 1, 1, issueHeaders.length).setBackground('#fff3cd');
+      } else if (issue.issue.includes('[REDUCE MGR]') || issue.issue.includes('[INCREASE IC]')) {
+        // Light blue for cross-track issues
+        issuesSheet.getRange(rowNum, 1, 1, issueHeaders.length).setBackground('#e3f2fd');
+      } else {
+        // Red for progression issues
+        issuesSheet.getRange(rowNum, 1, 1, issueHeaders.length).setBackground('#ffebee');
+      }
+    }
     
     // Add data validation for Status column (Pending/Approved/Rejected)
     const statusRange = issuesSheet.getRange(2, 10, issueRows.length, 1);
@@ -7501,20 +7638,24 @@ function reviewRangeProgression() {
     // Add instructions at the top
     issuesSheet.insertRowBefore(1);
     issuesSheet.getRange(1, 1, 1, issueHeaders.length).merge()
-      .setValue('📋 INSTRUCTIONS: Review each issue. For IC vs Mgr violations, approve ONE option: [REDUCE MGR] or [INCREASE IC]. Edit "Recommended Value" if needed, set "Status" to "Approved", then run "Apply Range Corrections".')
+      .setValue('📋 INSTRUCTIONS: Review each issue. [INCOMPLETE DATA]=orange, [IC vs Mgr]=blue, [PROGRESSION]=red. Edit "Recommended Value" if needed, set "Status" to "Approved", then run "Apply Range Corrections".')
       .setBackground('#fff3cd')
       .setFontWeight('bold')
       .setWrap(true);
     issuesSheet.setRowHeight(1, 50);
     
+    // Build summary message
+    const completenessCount = allIssues.filter(i => i.issue.includes('[INCOMPLETE DATA]')).length;
+    const crossTrackCount = allIssues.filter(i => i.issue.includes('[REDUCE MGR]') || i.issue.includes('[INCREASE IC]')).length;
+    const progressionCount = allIssues.length - completenessCount - crossTrackCount;
+    
     ui.alert('🔍 Range Progression Review Complete', 
-      `Found ${issues.length} range progression issue(s).\n\n` +
-      `These have been logged in the "Range Progression Issues" sheet.\n\n` +
-      `Next steps:\n` +
-      `1. Review each issue\n` +
-      `2. Edit "Recommended Value" if needed\n` +
-      `3. Change "Status" to "Approved" for issues you want to fix\n` +
-      `4. Run "Tools → Apply Range Corrections" to update Full List`,
+      `Found ${allIssues.length} total issue(s):\n\n` +
+      `• 🟠 Data Completeness: ${completenessCount}\n` +
+      `• 🔵 IC vs Mgr Cross-Track: ${crossTrackCount}\n` +
+      `• 🔴 Within-Track Progression: ${progressionCount}\n\n` +
+      `Review the "Range Progression Issues" sheet.\n` +
+      `Set "Status" to "Approved", then run "Apply Range Corrections".`,
       ui.ButtonSet.OK);
     
     // Switch to issues sheet
@@ -7522,15 +7663,17 @@ function reviewRangeProgression() {
     
   } else {
     issuesSheet.getRange(2, 1, 1, issueHeaders.length).setValues([
-      ['', '', '', '', '', '', '', '✅ No progression issues found!', '', '']
+      ['', '', '', '', '', '', '', '✅ No issues found!', '', '']
     ]).setBackground('#d4edda').setFontWeight('bold');
     
     issuesSheet.autoResizeColumns(1, issueHeaders.length);
     issuesSheet.setFrozenRows(1);
     
     ui.alert('✅ All Good!', 
-      'No range progression issues found.\n\n' +
-      'All salary ranges increase properly as levels go up.',
+      'No issues found!\n\n' +
+      '• All range data is complete\n' +
+      '• All salary ranges increase properly as levels go up\n' +
+      '• IC is higher than Mgr at equivalent levels',
       ui.ButtonSet.OK);
   }
 }
