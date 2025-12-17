@@ -7052,9 +7052,10 @@ function reviewRangeProgression() {
     'This will analyze Full List for:\n\n' +
     '1. Within-track progression: salary ranges must increase as levels go up\n' +
     '2. Cross-track validation: IC must be higher than Mgr at equivalent levels (L4-L7)\n\n' +
-    'Strategy: Mgr ranges are reduced (5-10% below IC) to avoid inflating market data.\n' +
-    'Progression conflicts will be flagged if reducing Mgr would break level progression.\n\n' +
-    'Violations will be flagged in a new "Range Progression Issues" sheet for your review.\n\n' +
+    'For IC vs Mgr issues, TWO OPTIONS are provided:\n' +
+    '• [REDUCE MGR] - Lower Mgr to 92.5% of IC (avoids market drift)\n' +
+    '• [INCREASE IC] - Raise IC to 108% of Mgr (if market supports it)\n\n' +
+    'Approve ONE option per violation. Progression conflicts are flagged.\n\n' +
     'Click OK to start...', 
     ui.ButtonSet.OK_CANCEL);
   
@@ -7218,9 +7219,10 @@ function reviewRangeProgression() {
   // For the same Region + Aon Code, IC track must be higher than Mgr track
   // at equivalent levels: L4 IC > L4 Mgr, L5 IC > L5 Mgr, ... L7 IC > L7 Mgr
   // 
-  // STRATEGY: Reduce Mgr ranges (not inflate IC) to avoid market drift
-  // Mgr should be 5-10% lower than IC at the same level
-  // BUT must still maintain progression within Mgr track (>= previous Mgr level)
+  // TWO OPTIONS PROVIDED for each violation:
+  // Option A: Reduce Mgr to 92.5% of IC (preferred to avoid market drift)
+  // Option B: Increase IC to 108% of Mgr (if market data supports higher IC)
+  // User approves ONE option per violation
   
   SpreadsheetApp.getActive().toast('Checking IC vs Mgr cross-track validation...', '🔍 Range Progression Review', 3);
   
@@ -7245,12 +7247,20 @@ function reviewRangeProgression() {
   // Levels where IC should be > Mgr (L4 through L7), in order for progression checking
   const crossTrackLevels = ['L4', 'L5', 'L5.5', 'L6', 'L6.5', 'L7'];
   
-  // Helper to get previous Mgr level in sequence
-  const getPreviousMgrLevel = (levelNum, mgrTrack) => {
+  // Helper to get previous level in sequence for a given track
+  const getPreviousLevel = (levelNum, track) => {
     const idx = crossTrackLevels.indexOf(levelNum);
-    if (idx <= 0) return null;  // L4 has no previous Mgr level
+    if (idx <= 0) return null;  // L4 has no previous level
     const prevLevelNum = crossTrackLevels[idx - 1];
-    return mgrTrack.get(prevLevelNum) || null;
+    return track.get(prevLevelNum) || null;
+  };
+  
+  // Helper to get next level in sequence for a given track
+  const getNextLevel = (levelNum, track) => {
+    const idx = crossTrackLevels.indexOf(levelNum);
+    if (idx < 0 || idx >= crossTrackLevels.length - 1) return null;
+    const nextLevelNum = crossTrackLevels[idx + 1];
+    return track.get(nextLevelNum) || null;
   };
   
   for (const [baseKey, tracks] of crossTrackMap.entries()) {
@@ -7263,21 +7273,19 @@ function reviewRangeProgression() {
       // Skip if either track doesn't have data for this level
       if (!icData || !mgrData) continue;
       
-      // Get previous Mgr level for progression check
-      const prevMgrData = getPreviousMgrLevel(levelNum, tracks.Mgr);
+      // Get previous/next levels for progression checks
+      const prevMgrData = getPreviousLevel(levelNum, tracks.Mgr);
+      const nextIcData = getNextLevel(levelNum, tracks.IC);
       
       // Check Range Start: IC should be > Mgr
       if (icData.rangeStart > 0 && mgrData.rangeStart > 0 && icData.rangeStart <= mgrData.rangeStart) {
-        // Calculate recommended Mgr value (90-95% of IC, use 92.5% as middle ground)
+        // OPTION A: Reduce Mgr to 92.5% of IC
         let recommendedMgr = Math.floor(icData.rangeStart * 0.925);
-        
-        // Check if recommended would break Mgr progression
         const prevMgrStart = prevMgrData ? prevMgrData.rangeStart : 0;
-        let progressionConflict = false;
+        let mgrProgressionConflict = false;
         
         if (prevMgrStart > 0 && recommendedMgr < prevMgrStart) {
-          progressionConflict = true;
-          // Use the minimum valid value (just above previous Mgr level)
+          mgrProgressionConflict = true;
           recommendedMgr = Math.ceil(prevMgrStart * 1.01);  // 1% above previous
         }
         
@@ -7289,26 +7297,48 @@ function reviewRangeProgression() {
           currentValue: mgrData.rangeStart,
           previousLevel: `${levelNum} IC`,
           previousValue: icData.rangeStart,
-          issue: progressionConflict 
-            ? `IC vs Mgr: ${levelNum} Mgr (${formatNumber(mgrData.rangeStart)}) ≥ ${levelNum} IC (${formatNumber(icData.rangeStart)}) ⚠️ CONFLICT: reducing to IC-5-10% would break progression vs ${prevMgrData.level}`
-            : `IC vs Mgr: ${levelNum} Mgr (${formatNumber(mgrData.rangeStart)}) ≥ ${levelNum} IC (${formatNumber(icData.rangeStart)})`,
+          issue: mgrProgressionConflict 
+            ? `[REDUCE MGR] ${levelNum} Mgr (${formatNumber(mgrData.rangeStart)}) ≥ ${levelNum} IC (${formatNumber(icData.rangeStart)}) ⚠️ Would break progression vs ${prevMgrData.level}`
+            : `[REDUCE MGR] ${levelNum} Mgr (${formatNumber(mgrData.rangeStart)}) ≥ ${levelNum} IC (${formatNumber(icData.rangeStart)})`,
           recommended: recommendedMgr,
+          status: 'Pending'
+        });
+        
+        // OPTION B: Increase IC to 108% of Mgr
+        let recommendedIc = Math.ceil(mgrData.rangeStart * 1.08);
+        const nextIcStart = nextIcData ? nextIcData.rangeStart : 0;
+        let icProgressionConflict = false;
+        
+        if (nextIcStart > 0 && recommendedIc >= nextIcStart) {
+          icProgressionConflict = true;
+          recommendedIc = Math.floor(nextIcStart * 0.99);  // 1% below next
+        }
+        
+        issues.push({
+          region: region,
+          jobFamily: aonCode,
+          level: `${levelNum} IC`,
+          metric: 'Range Start',
+          currentValue: icData.rangeStart,
+          previousLevel: `${levelNum} Mgr`,
+          previousValue: mgrData.rangeStart,
+          issue: icProgressionConflict 
+            ? `[INCREASE IC] ${levelNum} IC (${formatNumber(icData.rangeStart)}) ≤ ${levelNum} Mgr (${formatNumber(mgrData.rangeStart)}) ⚠️ Would break progression vs ${nextIcData.level}`
+            : `[INCREASE IC] ${levelNum} IC (${formatNumber(icData.rangeStart)}) ≤ ${levelNum} Mgr (${formatNumber(mgrData.rangeStart)})`,
+          recommended: recommendedIc,
           status: 'Pending'
         });
       }
       
       // Check Range Mid: IC should be > Mgr
       if (icData.rangeMid > 0 && mgrData.rangeMid > 0 && icData.rangeMid <= mgrData.rangeMid) {
-        // Calculate recommended Mgr value (90-95% of IC, use 92.5% as middle ground)
+        // OPTION A: Reduce Mgr to 92.5% of IC
         let recommendedMgr = Math.floor(icData.rangeMid * 0.925);
-        
-        // Check if recommended would break Mgr progression
         const prevMgrMid = prevMgrData ? prevMgrData.rangeMid : 0;
-        let progressionConflict = false;
+        let mgrProgressionConflict = false;
         
         if (prevMgrMid > 0 && recommendedMgr < prevMgrMid) {
-          progressionConflict = true;
-          // Use the minimum valid value (just above previous Mgr level)
+          mgrProgressionConflict = true;
           recommendedMgr = Math.ceil(prevMgrMid * 1.01);  // 1% above previous
         }
         
@@ -7320,26 +7350,48 @@ function reviewRangeProgression() {
           currentValue: mgrData.rangeMid,
           previousLevel: `${levelNum} IC`,
           previousValue: icData.rangeMid,
-          issue: progressionConflict 
-            ? `IC vs Mgr: ${levelNum} Mgr (${formatNumber(mgrData.rangeMid)}) ≥ ${levelNum} IC (${formatNumber(icData.rangeMid)}) ⚠️ CONFLICT: reducing to IC-5-10% would break progression vs ${prevMgrData.level}`
-            : `IC vs Mgr: ${levelNum} Mgr (${formatNumber(mgrData.rangeMid)}) ≥ ${levelNum} IC (${formatNumber(icData.rangeMid)})`,
+          issue: mgrProgressionConflict 
+            ? `[REDUCE MGR] ${levelNum} Mgr (${formatNumber(mgrData.rangeMid)}) ≥ ${levelNum} IC (${formatNumber(icData.rangeMid)}) ⚠️ Would break progression vs ${prevMgrData.level}`
+            : `[REDUCE MGR] ${levelNum} Mgr (${formatNumber(mgrData.rangeMid)}) ≥ ${levelNum} IC (${formatNumber(icData.rangeMid)})`,
           recommended: recommendedMgr,
+          status: 'Pending'
+        });
+        
+        // OPTION B: Increase IC to 108% of Mgr
+        let recommendedIc = Math.ceil(mgrData.rangeMid * 1.08);
+        const nextIcMid = nextIcData ? nextIcData.rangeMid : 0;
+        let icProgressionConflict = false;
+        
+        if (nextIcMid > 0 && recommendedIc >= nextIcMid) {
+          icProgressionConflict = true;
+          recommendedIc = Math.floor(nextIcMid * 0.99);  // 1% below next
+        }
+        
+        issues.push({
+          region: region,
+          jobFamily: aonCode,
+          level: `${levelNum} IC`,
+          metric: 'Range Mid',
+          currentValue: icData.rangeMid,
+          previousLevel: `${levelNum} Mgr`,
+          previousValue: mgrData.rangeMid,
+          issue: icProgressionConflict 
+            ? `[INCREASE IC] ${levelNum} IC (${formatNumber(icData.rangeMid)}) ≤ ${levelNum} Mgr (${formatNumber(mgrData.rangeMid)}) ⚠️ Would break progression vs ${nextIcData.level}`
+            : `[INCREASE IC] ${levelNum} IC (${formatNumber(icData.rangeMid)}) ≤ ${levelNum} Mgr (${formatNumber(mgrData.rangeMid)})`,
+          recommended: recommendedIc,
           status: 'Pending'
         });
       }
       
       // Check Range End: IC should be > Mgr
       if (icData.rangeEnd > 0 && mgrData.rangeEnd > 0 && icData.rangeEnd <= mgrData.rangeEnd) {
-        // Calculate recommended Mgr value (90-95% of IC, use 92.5% as middle ground)
+        // OPTION A: Reduce Mgr to 92.5% of IC
         let recommendedMgr = Math.floor(icData.rangeEnd * 0.925);
-        
-        // Check if recommended would break Mgr progression
         const prevMgrEnd = prevMgrData ? prevMgrData.rangeEnd : 0;
-        let progressionConflict = false;
+        let mgrProgressionConflict = false;
         
         if (prevMgrEnd > 0 && recommendedMgr < prevMgrEnd) {
-          progressionConflict = true;
-          // Use the minimum valid value (just above previous Mgr level)
+          mgrProgressionConflict = true;
           recommendedMgr = Math.ceil(prevMgrEnd * 1.01);  // 1% above previous
         }
         
@@ -7351,10 +7403,35 @@ function reviewRangeProgression() {
           currentValue: mgrData.rangeEnd,
           previousLevel: `${levelNum} IC`,
           previousValue: icData.rangeEnd,
-          issue: progressionConflict 
-            ? `IC vs Mgr: ${levelNum} Mgr (${formatNumber(mgrData.rangeEnd)}) ≥ ${levelNum} IC (${formatNumber(icData.rangeEnd)}) ⚠️ CONFLICT: reducing to IC-5-10% would break progression vs ${prevMgrData.level}`
-            : `IC vs Mgr: ${levelNum} Mgr (${formatNumber(mgrData.rangeEnd)}) ≥ ${levelNum} IC (${formatNumber(icData.rangeEnd)})`,
+          issue: mgrProgressionConflict 
+            ? `[REDUCE MGR] ${levelNum} Mgr (${formatNumber(mgrData.rangeEnd)}) ≥ ${levelNum} IC (${formatNumber(icData.rangeEnd)}) ⚠️ Would break progression vs ${prevMgrData.level}`
+            : `[REDUCE MGR] ${levelNum} Mgr (${formatNumber(mgrData.rangeEnd)}) ≥ ${levelNum} IC (${formatNumber(icData.rangeEnd)})`,
           recommended: recommendedMgr,
+          status: 'Pending'
+        });
+        
+        // OPTION B: Increase IC to 108% of Mgr
+        let recommendedIc = Math.ceil(mgrData.rangeEnd * 1.08);
+        const nextIcEnd = nextIcData ? nextIcData.rangeEnd : 0;
+        let icProgressionConflict = false;
+        
+        if (nextIcEnd > 0 && recommendedIc >= nextIcEnd) {
+          icProgressionConflict = true;
+          recommendedIc = Math.floor(nextIcEnd * 0.99);  // 1% below next
+        }
+        
+        issues.push({
+          region: region,
+          jobFamily: aonCode,
+          level: `${levelNum} IC`,
+          metric: 'Range End',
+          currentValue: icData.rangeEnd,
+          previousLevel: `${levelNum} Mgr`,
+          previousValue: mgrData.rangeEnd,
+          issue: icProgressionConflict 
+            ? `[INCREASE IC] ${levelNum} IC (${formatNumber(icData.rangeEnd)}) ≤ ${levelNum} Mgr (${formatNumber(mgrData.rangeEnd)}) ⚠️ Would break progression vs ${nextIcData.level}`
+            : `[INCREASE IC] ${levelNum} IC (${formatNumber(icData.rangeEnd)}) ≤ ${levelNum} Mgr (${formatNumber(mgrData.rangeEnd)})`,
+          recommended: recommendedIc,
           status: 'Pending'
         });
       }
@@ -7424,7 +7501,7 @@ function reviewRangeProgression() {
     // Add instructions at the top
     issuesSheet.insertRowBefore(1);
     issuesSheet.getRange(1, 1, 1, issueHeaders.length).merge()
-      .setValue('📋 INSTRUCTIONS: Review each issue below. Edit "Recommended Value" if needed, then change "Status" to "Approved". Run "Apply Range Corrections" to update Full List.')
+      .setValue('📋 INSTRUCTIONS: Review each issue. For IC vs Mgr violations, approve ONE option: [REDUCE MGR] or [INCREASE IC]. Edit "Recommended Value" if needed, set "Status" to "Approved", then run "Apply Range Corrections".')
       .setBackground('#fff3cd')
       .setFontWeight('bold')
       .setWrap(true);
